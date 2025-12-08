@@ -9,10 +9,5 @@
     { "path": "arrows_30.py",   "target": "arrows_30.py" },
     { "path": "Pico_LCD_1_8.py","target": "Pico_LCD_1_8.py" },
     { "path": "logo.bin",       "target": "logo.bin" }
-
-    /* Add any library files inside lib/ below, one per file, for example:
-    ,{ "path": "lib/some_driver.py", "target": "lib/some_driver.py" }
-    ,{ "path": "lib/another.py",     "target": "lib/another.py" }
-    */
   ]
 }
