@@ -1015,9 +1015,10 @@ def main():
     print("Stale >=", STALE_MIN, "Low <", LOW_THRESHOLD, "High >", HIGH_THRESHOLD)
     print("Alert DoubleUp:", ALERT_DOUBLE_UP, "DoubleDown:", ALERT_DOUBLE_DOWN)
 
-    wri_small  = CWriter(lcd, font_main,   fgcolor=WHITE, bgcolor=BLACK)
-    wri_bg     = CWriter(lcd, font_bg,     fgcolor=WHITE, bgcolor=BLACK)
-    wri_arrows = CWriter(lcd, font_arrows, fgcolor=WHITE, bgcolor=BLACK)
+    wri_small  = CWriter(lcd, font_main,   fgcolor=WHITE, bgcolor=BLACK, verbose=False)
+    wri_bg     = CWriter(lcd, font_bg,     fgcolor=WHITE, bgcolor=BLACK, verbose=False)
+    wri_arrows = CWriter(lcd, font_arrows, fgcolor=WHITE, bgcolor=BLACK, verbose=False)
+
 
     # Wi-Fi boot retry; if totally broken, reboot (no re-config unless factory reset)
     wifi_fail = 0
