@@ -6,7 +6,6 @@ import machine
 import socket
 import uos as os  # filesystem
 import gc
-import utime
 import json
 
 def net_diag():
