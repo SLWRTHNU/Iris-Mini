@@ -2,11 +2,17 @@
   "model": "mini",
   "version": "1.0.0",
   "files": [
-    { "path": "main.py",      "target": "main.py" },
-    { "path": "writer.py",    "target": "writer.py" },
-    { "path": "small_20.py",  "target": "small_20.py" },
-    { "path": "large_65.py",  "target": "large_65.py" },
-    { "path": "arrows_30.py", "target": "arrows_30.py" },
-    { "path": "logo.bin",     "target": "logo.bin" }
+    { "path": "main.py",        "target": "main.py" },
+    { "path": "writer.py",      "target": "writer.py" },
+    { "path": "small_20.py",    "target": "small_20.py" },
+    { "path": "large_65.py",    "target": "large_65.py" },
+    { "path": "arrows_30.py",   "target": "arrows_30.py" },
+    { "path": "Pico_LCD_1_8.py","target": "Pico_LCD_1_8.py" },
+    { "path": "logo.bin",       "target": "logo.bin" }
+
+    /* Add any library files inside lib/ below, one per file, for example:
+    ,{ "path": "lib/some_driver.py", "target": "lib/some_driver.py" }
+    ,{ "path": "lib/another.py",     "target": "lib/another.py" }
+    */
   ]
 }
