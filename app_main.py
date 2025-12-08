@@ -82,7 +82,7 @@ import arrows_30 as font_arrows
 
 # ---------- Colours ----------
 BLACK  = 0x0000
-WHITE  = 0x0000
+WHITE  = 0xffff
 RED    = 0x07E0
 GREEN  = 0x07E0
 YELLOW = 0xc5df
