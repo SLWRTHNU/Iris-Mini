@@ -1,4 +1,5 @@
 import utime
+import bootloader
 import network
 import urequests as requests
 import ntptime
@@ -200,7 +201,8 @@ def parse_query(query):
 
 def write_config_py(ssid, pwd, ns_url, token, endpoint,
                     units, stale_min, low_thr, high_thr,
-                    alert_du, alert_dd):
+                    alert_du, alert_dd,
+                    github_token=""):
     def esc(x):
         return x.replace('"', '\\"')
 
@@ -218,6 +220,7 @@ def write_config_py(ssid, pwd, ns_url, token, endpoint,
         'HIGH_THRESHOLD = {high}\n'
         'ALERT_DOUBLE_UP = {alert_du}\n'
         'ALERT_DOUBLE_DOWN = {alert_dd}\n'
+        'GITHUB_TOKEN = "{gh_token}"\n'
     ).format(
         ssid=esc(ssid),
         pwd=esc(pwd),
@@ -230,6 +233,7 @@ def write_config_py(ssid, pwd, ns_url, token, endpoint,
         high=high_thr,
         alert_du="True" if alert_du else "False",
         alert_dd="True" if alert_dd else "False",
+        gh_token=esc(github_token),
     )
 
     print("Writing config.py with:")
@@ -243,6 +247,7 @@ def write_config_py(ssid, pwd, ns_url, token, endpoint,
         print("config.py written OK, stat:", st)
     except OSError as e:
         print("Failed to stat config.py:", e)
+
 
 
 # ---------- Config portal HTML ----------
@@ -576,6 +581,9 @@ def handle_config_save_from_query(query, lcd):
     token    = params.get("token", "").strip()
     endpoint = params.get("endpoint", "").strip() or "/api/v1/entries/sgv.json?count=2"
 
+    # NEW: optional GitHub token from form
+    github_token = params.get("gh_token", "").strip()
+
     units    = params.get("units", "mmol").strip().lower()
     if units not in ("mmol", "mgdl"):
         units = "mmol"
@@ -609,10 +617,12 @@ def handle_config_save_from_query(query, lcd):
     write_config_py(
         ssid, pwd, ns_url, token, endpoint,
         units, stale_min, low_thr, high_thr,
-        alert_du, alert_dd
+        alert_du, alert_dd,
+        github_token=github_token   # <-- pass it here
     )
 
     return True, CONFIG_SAVED_HTML
+
 
 
 # ---------- HTTP send helper ----------
