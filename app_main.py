@@ -82,7 +82,7 @@ import large_65 as font_bg
 import arrows_30 as font_arrows
 
 # ---------- Colours ----------
-BLACK  = 0x0000
+BLACK  = 0xc5df
 WHITE  = 0xffff
 RED    = 0x07E0
 GREEN  = 0x07E0
