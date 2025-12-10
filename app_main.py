@@ -583,10 +583,6 @@ def handle_config_save_from_query(query, lcd):
     ns_url   = params.get("ns_url", "").strip()
     token    = params.get("token", "").strip()
     endpoint = params.get("endpoint", "").strip() or "/api/v1/entries/sgv.json?count=2"
-
-    # NEW: optional GitHub token from form
-    github_token = params.get("gh_token", "").strip()
-
     units    = params.get("units", "mmol").strip().lower()
     if units not in ("mmol", "mgdl"):
         units = "mmol"
@@ -620,8 +616,7 @@ def handle_config_save_from_query(query, lcd):
     write_config_py(
         ssid, pwd, ns_url, token, endpoint,
         units, stale_min, low_thr, high_thr,
-        alert_du, alert_dd,
-        github_token=github_token   # <-- pass it here
+        alert_du, alert_dd
     )
 
     return True, CONFIG_SAVED_HTML
