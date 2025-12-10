@@ -9,7 +9,6 @@ import uos as os  # filesystem
 import gc
 import json
 
-GITHUB_TOKEN_VALUE = "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"
 REMOTE_CHECK_INTERVAL = 30
 
 def net_diag():
@@ -121,6 +120,7 @@ LOW_THRESHOLD      = 4.0
 HIGH_THRESHOLD     = 11.0
 ALERT_DOUBLE_UP    = True
 ALERT_DOUBLE_DOWN  = True
+GITHUB_TOKEN_VALUE = "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"
 
 # ---------- Detect existing config ----------
 try:
