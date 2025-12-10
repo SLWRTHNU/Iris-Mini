@@ -9,6 +9,7 @@ import uos as os  # filesystem
 import gc
 import json
 
+GITHUB_TOKEN_VALUE = "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"
 REMOTE_CHECK_INTERVAL = 30
 
 def net_diag():
