@@ -1090,8 +1090,6 @@ def _main_impl(lcd):
 
     processed_data = None
     sync_counter = 0
-        processed_data = None
-    sync_counter = 0
     last_cmd_check = utime.time()
 
     while True:
