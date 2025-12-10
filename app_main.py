@@ -9,6 +9,8 @@ import uos as os  # filesystem
 import gc
 import json
 
+REMOTE_CHECK_INTERVAL = 30
+
 def net_diag():
     try:
         import network, socket
@@ -960,6 +962,35 @@ def draw_screen(lcd, bg_data):
 # ---------- Main ----------
 
 def main():
+    """
+    Safe entry point for app_main.
+    Any fatal error will be shown on the LCD and trigger a reboot,
+    so the device does not freeze on a stale screen.
+    """
+    lcd = None
+    try:
+        lcd = ST7735()
+        lcd.fill(BLACK)
+        lcd.show()
+
+        _main_impl(lcd)
+
+    except Exception as e:
+        print("FATAL error in app_main.main():", e)
+        try:
+            if lcd is None:
+                lcd = ST7735()
+            lcd.fill(BLACK)
+            lcd.text("APP ERROR", 5, 40, WHITE)
+            lcd.text("Rebooting...", 5, 60, WHITE)
+            lcd.show()
+        except Exception:
+            pass
+
+        utime.sleep(3)
+        machine.reset()
+
+def _main_impl(lcd):
     global DISPLAY_WIDTH, DISPLAY_HEIGHT
     global wri_small, wri_bg, wri_arrows
     global WIFI_SSID, WIFI_PASSWORD, NS_URL, NS_TOKEN, API_ENDPOINT
@@ -1059,8 +1090,12 @@ def main():
 
     processed_data = None
     sync_counter = 0
+        processed_data = None
+    sync_counter = 0
+    last_cmd_check = utime.time()
 
     while True:
+        # Periodic NTP re-sync
         if sync_counter >= SYNC_INTERVAL:
             try:
                 ntptime.settime()
@@ -1100,10 +1135,21 @@ def main():
         else:
             draw_screen(lcd, None)
 
+        # Remote command check (reboot / force update)
+        now = utime.time()
+        if now - last_cmd_check >= REMOTE_CHECK_INTERVAL:
+            last_cmd_check = now
+            try:
+                bootloader.check_remote_commands()
+            except Exception as e:
+                print("Remote command check failed:", e)
+
         heartbeat("main-loop")
         utime.sleep(5)
 
 
+
 if __name__ == "__main__":
     main()
+
 
