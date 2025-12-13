@@ -1,27 +1,3 @@
-# writer.py Implements the Writer class.
-# Handles colour, word wrap and tab stops
-
-# V0.5.2 May 2025 Fix bug whereby glyph clipping might be attempted.
-# V0.5.1 Dec 2022 Support 4-bit color display drivers.
-# V0.5.0 Sep 2021 Color now requires firmware >= 1.17.
-# V0.4.3 Aug 2021 Support for fast blit to color displays (PR7682).
-# V0.4.0 Jan 2021 Improved handling of word wrap and line clip. Upside-down
-# rendering no longer supported: delegate to device driver.
-# V0.3.5 Sept 2020 Fast rendering option for color displays
-
-# Released under the MIT License (MIT). See LICENSE.
-# Copyright (c) 2019-2021 Peter Hinch
-
-# A Writer supports rendering text to a Display instance in a given font.
-# Multiple Writer instances may be created, each rendering a font to the
-# same Display object.
-
-# Timings were run on a pyboard D SF6W comparing slow and fast rendering
-# and averaging over multiple characters. Proportional fonts were used.
-# 20 pixel high font, timings were 5.44ms/467μs, gain 11.7 (freesans20).
-# 10 pixel high font, timings were 1.76ms/396μs, gain 4.36 (arial10).
-
-
 import framebuf
 from uctypes import bytearray_at, addressof
 
@@ -306,4 +282,3 @@ class CWriter(Writer):
             if bgcolor is not None:
                 self.bgcolor = bgcolor
         return self.fgcolor, self.bgcolor
-
