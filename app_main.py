@@ -8,8 +8,16 @@ import socket
 import uos as os  # filesystem
 import gc
 import json
+import framebuf
+import uos as os
+
 
 REMOTE_CHECK_INTERVAL = 30
+
+def get_loading_status(status_msg, step):
+    """Adds 0, 1, 2, or 3 dots to a status message based on step % 4."""
+    dots = "." * (step % 4)
+    return status_msg + dots
 
 def net_diag():
     try:
@@ -19,8 +27,6 @@ def net_diag():
         return
 
     wlan = network.WLAN(network.STA_IF)
-    print("=== NET DIAG ===")
-    print("status:", wlan.status(), "isconnected:", wlan.isconnected())
     try:
         print("ifconfig:", wlan.ifconfig())
     except Exception as e:
@@ -30,7 +36,6 @@ def net_diag():
     host = "sennaloop-673ad2782247.herokuapp.com"
     try:
         info = socket.getaddrinfo(host, 443)
-        print("DNS OK:", info)
     except OSError as e:
         print("DNS error:", e)
 
@@ -40,7 +45,6 @@ def net_diag():
         s = socket.socket()
         s.settimeout(5)
         s.connect(addr)
-        print("RAW IP OK (1.1.1.1:80)")
         s.close()
     except OSError as e:
         print("RAW IP error:", e)
@@ -69,13 +73,208 @@ def heartbeat(tag="OK"):
         )
         last_heartbeat_ms = now
 
+# ---------- Boot logo helpers ----------
+
+LOGO_FILE = "logo.bin"
+LOGO_W = 160   # image width in pixels
+LOGO_H = 128   # image height in pixels
+
+_boot_logo_fb = None
+_boot_logo_ready = False
+
+
+def load_boot_logo():
+    """
+    Load logo.bin as an RGB565 FrameBuffer once.
+    """
+    global _boot_logo_fb, _boot_logo_ready
+
+    if _boot_logo_ready:
+        return
+
+    try:
+        with open(LOGO_FILE, "rb") as f:
+            buf = f.read()
+    except OSError as e:
+        print("Boot logo: failed to open", LOGO_FILE, ":", e)
+        _boot_logo_fb = None
+        _boot_logo_ready = True
+        return
+
+    expected = LOGO_W * LOGO_H * 2
+    if len(buf) != expected:
+        print("Boot logo: size mismatch, got", len(buf), "expected", expected)
+        _boot_logo_fb = None
+        _boot_logo_ready = True
+        return
+
+    try:
+        import framebuf
+        fb = framebuf.FrameBuffer(bytearray(buf), LOGO_W, LOGO_H, framebuf.RGB565)
+        _boot_logo_fb = fb
+        _boot_logo_ready = True
+        print("Boot logo loaded, bytes:", len(buf))
+    except Exception as e:
+        print("Boot logo: FrameBuffer init failed:", e)
+        _boot_logo_fb = None
+        _boot_logo_ready = True
+
+# ---------- Main Boot Sequence with Animation ----------
+
+def boot_sequence(lcd):
+    """
+    Handles the entire animated boot process:
+    1. Animated Wi-Fi connection.
+    2. Animated initial data fetch.
+    Returns the initial parsed data or raises RuntimeError on failure.
+    """
+    # Use a counter for the animation state
+    dots_counter = 0
+    
+    # --- 1. Wi-Fi Connection Phase (Animated) ---
+    wlan = network.WLAN(network.STA_IF)
+    status_msg = "Wi-Fi: {}".format(WIFI_SSID) # Static message for subline
+    
+    print("Attempting Wi-Fi connection...")
+    
+    # Ensure AP is off and STA is on before trying to connect
+    ap = network.WLAN(network.AP_IF)
+    ap.active(False)
+    wlan.active(True)
+    wlan.connect(WIFI_SSID, WIFI_PASSWORD)
+    
+    max_wait_ms = 15000 # 15 seconds total wait for connection
+    start_time = utime.ticks_ms()
+    
+    while wlan.status() != 3:
+        if utime.ticks_diff(utime.ticks_ms(), start_time) >= max_wait_ms:
+            # Manually trigger the connect_wifi logic to display the failure message
+            try:
+                connect_wifi(lcd) 
+            except Exception:
+                pass 
+            raise RuntimeError("Wi-Fi connection timed out.")
+
+        dots_counter = (dots_counter + 1) % 4
+        # Draw the connection status message. Swapping:
+        # - "Connecting" is the animated status (Y=140)
+        # - status_msg ("Wi-Fi: <SSID>") is the static subline (Y=150)
+        draw_logo_with_status(lcd, "Loading", status_msg, dots_counter)
+        utime.sleep_ms(500) # Half-second update for animation
+
+    # Now that we are connected, perform NTP sync and display final 'Wi-Fi OK' message
+    # This will skip the long connection loop inside connect_wifi
+    connect_wifi(lcd)
+
+
+    # --- 2. Initial Data Fetch Phase (Animated) ---
+    data = None
+    max_fetch_attempts = 5
+    
+    print("Fetching initial data...")
+    
+    for fetch_attempt in range(max_fetch_attempts):
+        dots_counter = (dots_counter + 1) % 4
+        # Use the simpler loading screen while fetching (draw_loading_screen is fine)
+        draw_loading_screen(lcd, dots_counter)
+        utime.sleep_ms(0) # Quick animation update before blocking fetch
+        
+        # Attempt to fetch data (this is the blocking call)
+        raw = fetch_glucose_data()
+        if raw:
+            # Process immediately to confirm validity
+            data = parse_and_calculate(raw)
+            if data:
+                print("Initial data fetched successfully.")
+                return data
+        
+        # *** CHANGE MADE HERE ***
+        print("Data fetch failed, retrying in 5s...")
+        
+        # Animate "Retrying..." during the 5-second wait time
+        wait_seconds = 3 # Changed from 3 to 5
+        for i in range(wait_seconds * 2): # Animate twice a second (10 total iterations)
+            dots_counter = (dots_counter + 1) % 4
+            # New: "Retrying" is animated status, "NO DATA" is static subline
+            draw_logo_with_status(lcd, "Retrying", "NO DATA", dots_counter)
+            utime.sleep(0)
+            
+    # If initial data fetch failed across all attempts, raise fatal error
+    raise RuntimeError("Failed to fetch initial data.")
+
+def draw_boot_logo(lcd):
+    load_boot_logo()
+    lcd.fill(BLACK)
+    if _boot_logo_fb is not None:
+        try:
+            lcd.blit(_boot_logo_fb, 0, 0)
+        except Exception as e:
+            print("Boot logo blit failed:", e)
+
+    
+
+def draw_logo_with_status(lcd, status, subline, dots_count):
+    """
+    Draw logo + status text + animated dots.
+    dots_count: 0..3 -> ".", "..", "...", "" (new sequence)
+    """
+    load_boot_logo()
+
+    lcd.fill(BLACK)
+    if _boot_logo_fb is not None:
+        try:
+            lcd.blit(_boot_logo_fb, 0, 0)
+        except Exception as e:
+            print("Logo status blit failed:", e)
+
+    # NEW DOT LOGIC: 0->., 1->.., 2->..., 3->""
+    DOT_MAP = [".", "..", "...", ""] 
+    dots = DOT_MAP[dots_count]
+    
+    # Apply dots to the main status line (e.g., "Loading.", "Connecting..")
+    msg = "{}{}".format(status, dots)
+
+    # Draw status text (animated line) (Bottom Left: X=10, Y=140)
+    lcd.text(msg, 1, 119, BLACK)
+    if subline:
+        # Draw the subline (static info) (Bottom Left: X=10, Y=150)
+        lcd.text(msg, 1, 119, BLACK)
+
+    # Draw Device ID
+    _draw_device_id(lcd)
+    
+    lcd.show()
+
+
+
+
+def load_logo_if_needed():
+    """
+    Lazy-load logo.bin into RAM once.
+    logo.bin must be a RGB565 raw buffer: width * height * 2 bytes.
+    """
+    global LOGO_BUFFER
+    if LOGO_BUFFER is not None:
+        return
+
+    try:
+        with open("logo.bin", "rb") as f:
+            LOGO_BUFFER = f.read()
+
+    except OSError as e:
+        print("No logo.bin found:", e)
+        LOGO_BUFFER = None  # don't keep retrying
+
+
+
+
 
 # ---------- Display driver ----------
 try:
     from Pico_LCD_1_8 import LCD_1inch8 as ST7735
 except ImportError:
     print("FATAL: Display not found. Rebooting in 5 seconds...")
-    utime.sleep(5)
+    utime.sleep(0)
     machine.reset()
 
 from writer import CWriter
@@ -88,8 +287,21 @@ BLACK  = 0x0000
 WHITE  = 0xffff
 RED    = 0x07E0
 GREEN  = 0x07E0
-YELLOW = 0xc5df
+YELLOW = 0x20FD    
 BLUE   = 0x1200
+
+# Standard big-endian RGB565
+RED_BE   = 0xF800
+GREEN_BE = 0x07E0
+BLUE_BE  = 0x001F
+
+def swap16(c):
+    return ((c & 0xFF) << 8) | (c >> 8)
+
+# Use these with your Pico display:
+RED   = swap16(RED_BE)    # -> 0x00F8
+GREEN = swap16(GREEN_BE)  # -> 0xE007
+BLUE  = swap16(BLUE_BE)   # -> 0x1F00
 
 # ---------- Display / font globals ----------
 DISPLAY_WIDTH  = 128
@@ -113,14 +325,14 @@ NS_URL        = ""
 NS_TOKEN      = ""
 API_ENDPOINT  = ""
 
-# Alert/display config (with defaults)
-DISPLAY_UNITS      = "mmol"  # "mmol" or "mgdl"
-STALE_MIN          = 7.0
-LOW_THRESHOLD      = 4.0
-HIGH_THRESHOLD     = 11.0
-ALERT_DOUBLE_UP    = True
-ALERT_DOUBLE_DOWN  = True
-GITHUB_TOKEN_VALUE = "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"
+# Alert/display config (variables loaded from config.py)
+DISPLAY_UNITS       = None # "mmol" or "mgdl"
+STALE_MIN           = None
+LOW_THRESHOLD       = None
+HIGH_THRESHOLD      = None
+ALERT_DOUBLE_UP     = None
+ALERT_DOUBLE_DOWN   = None
+GITHUB_TOKEN = "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"
 
 # ---------- Detect existing config ----------
 try:
@@ -168,7 +380,7 @@ def check_factory_reset(lcd):
             print("Factory reset: no config.py or error:", e)
             lcd.text("No config.py", 5, 80, WHITE)
         lcd.show()
-        utime.sleep(2)
+        utime.sleep(0)
         machine.reset()
 
 
@@ -693,7 +905,7 @@ def ap_config_portal(lcd):
             cl.close()
             if ok:
                 # Give browser a moment to receive the response
-                utime.sleep(2)
+                utime.sleep(0)
                 print("Config saved, performing full reset")
                 machine.reset()   # same as pressing RESET
                 # no return needed; reset never returns
@@ -705,11 +917,61 @@ def ap_config_portal(lcd):
 
 # ---------- Wi-Fi + NTP ----------
 
-def connect_wifi(lcd):
-    lcd.fill(BLACK)
-    lcd.text("Collecting berries", 5, 60, WHITE)
-    lcd.show()
+# ---------------- Config helpers (copied from bootloader) ----------------
 
+DEVICE_ID_FILE = "device_id.txt"
+
+def load_device_id():
+    """
+    Read a persistent device ID from device_id.txt (root of Pico filesystem).
+    Returns a string or None if missing/empty.
+    """
+    try:
+        with open(DEVICE_ID_FILE, "r") as f:
+            devid = f.read().strip()
+            if devid:
+                return devid
+    except OSError:
+        pass
+    return None
+
+def _draw_device_id(lcd):
+    """
+    Draws the device ID in the bottom right corner of the screen.
+    """
+    dev_id = load_device_id()
+    if not dev_id:
+        dev_id = "N/A" # Fallback if ID file is missing
+
+    # Format the message
+    id_msg = "ID: {}".format(dev_id)
+
+    # Assume 8x8 font for lcd.text() (standard MicroPython/ST7735)
+    FONT_WIDTH = 8
+    FONT_HEIGHT = 8
+    
+    # Calculate text position (bottom right corner)
+    # The X position is determined by the screen width minus the length of the string
+    x = lcd.width - (len(id_msg) * FONT_WIDTH)
+    # The Y position is determined by the screen height minus the font height
+    y = lcd.height - FONT_HEIGHT
+    
+    # Draw the text in BLACK (0x0000)
+    # NOTE: To draw *in* black *on* the logo, you need a background color.
+    # The LCD only supports one foreground color in text(). Let's use WHITE text
+    # on a black background for visibility, or if the logo is colored, BLACK text on 
+    # the logo's background. Since the request specified "in black" on top of the logo:
+    lcd.text(id_msg, x, y, BLACK)
+    
+# ---------------- End of Config helpers ----------------
+# ---------- Wi-Fi + NTP ----------
+
+def connect_wifi(lcd):
+    """
+    Blocks until Wi-Fi is connected and NTP time is synchronized.
+    Does NOT draw any animation or dots, only final status/error message.
+    """
+    
     # Make sure AP is off in normal run mode
     ap = network.WLAN(network.AP_IF)
     ap.active(False)
@@ -718,18 +980,20 @@ def connect_wifi(lcd):
     wlan.active(True)
     wlan.connect(WIFI_SSID, WIFI_PASSWORD)
 
-    max_wait = 5
-    dots_x = 8
+    max_wait = 15 # Increased wait time to 15 seconds for robustness
+    
+    # Wait for connection, but do not animate here (animation is handled higher up)
     while max_wait > 0:
         status = wlan.status()
         if status < 0 or status >= 3:
             break
-        lcd.text(".", dots_x, 70, WHITE)
-        lcd.show()
-        dots_x += 6
-        utime.sleep(1)
+        
+        # NOTE: We skip utime.sleep(0) here as the calling function will handle waiting/animation
+        # We need a small yield to allow the core to breathe, but not a full second.
+        utime.sleep_ms(0) 
         max_wait -= 1
 
+    # Only treat *Wi-Fi* failure as fatal
     if wlan.status() != 3:
         lcd.fill(BLACK)
         lcd.text("Wi-Fi FAILED", 5, 40, WHITE)
@@ -739,28 +1003,23 @@ def connect_wifi(lcd):
         raise RuntimeError("Network connection failed (status {})".format(wlan.status()))
 
     ip = wlan.ifconfig()[0]
-    print("Connected. IP:", ip)
 
+    # NTP is *best effort* – never raise here
     try:
         ntptime.settime()
         print("Time synchronized.")
     except Exception as e:
         print("NTP error:", e)
-        lcd.fill(BLACK)
-        lcd.text("Time sync error", 5, 50, WHITE)
-        lcd.text("Retrying...", 5, 70, WHITE)
-        lcd.show()
-        utime.sleep(2)
+        # Just log; do not raise, so boot can continue.
 
-    lcd.fill(BLACK)
-    lcd.text("Wi-Fi OK", 5, 40, WHITE)
-    lcd.text("IP:", 5, 60, WHITE)
-    lcd.text(ip, 5, 80, WHITE)
-    lcd.show()
-    utime.sleep(2)
-
+    # Display connection success on the screen
+    # Since we are immediately calling fetch_data after this, we can skip
+    # the 2-second sleep and just let the animation handle the brief wait.
+# 
+    utime.sleep(0) # Pause for human to see
 
 # ---------- Nightscout fetch ----------
+
 
 def fetch_glucose_data():
     headers = {}
@@ -769,6 +1028,10 @@ def fetch_glucose_data():
 
     full_url = NS_URL + API_ENDPOINT
     print("Fetching:", full_url)
+    
+    # Store response object outside the try block for use in exception handler
+    resp = None
+    
     try:
         resp = requests.get(full_url, headers=headers)
         status = getattr(resp, "status_code", getattr(resp, "status", "unknown"))
@@ -776,23 +1039,37 @@ def fetch_glucose_data():
         data = resp.json()
         resp.close()
         return data
+    
     except OSError as e:
         # Network-level error (TCP, route, etc.)
         print("HTTP network error in fetch_glucose_data:", repr(e))
-        try:
-            resp.close()
-        except Exception:
-            pass
+        if resp:
+            try:
+                resp.close()
+            except Exception:
+                pass
         return None
+    
     except Exception as e:
         # JSON parse or other unexpected error
         print("HTTP/JSON error in fetch_glucose_data:", repr(e))
-        try:
-            resp.close()
-        except Exception:
-            pass
+        
+        # --- DIAGNOSTIC CODE ---
+        if resp:
+            try:
+                # Log the raw text that failed to parse as JSON
+                raw_text = resp.text
+                print("HTTP response raw text (JSON fail):", raw_text)
+            except Exception as e_text:
+                print("Could not read response text for diagnosis:", e_text)
+        # --- END DIAGNOSTIC CODE ---
+        
+        if resp:
+            try:
+                resp.close()
+            except Exception:
+                pass
         return None
-
 
 
 # ---------- Parse JSON ----------
@@ -872,10 +1149,10 @@ def get_alert_color(bg_data, minutes):
     double_down = ALERT_DOUBLE_DOWN and direction == "DoubleDown"
     high        = bg_val > HIGH_THRESHOLD
 
-    if stale or low or double_up or double_down:
+    if stale or low or double_down:
         return RED
 
-    if high:
+    if high or double_up:
         return YELLOW
     return WHITE
 
@@ -960,7 +1237,7 @@ def draw_screen(lcd, bg_data):
 def main():
     """
     Safe entry point for app_main.
-    Any fatal error will be shown on the LCD and trigger a reboot,
+    Any fatal error will be shown on the LCD and then we reboot,
     so the device does not freeze on a stale screen.
     """
     lcd = None
@@ -983,8 +1260,9 @@ def main():
         except Exception:
             pass
 
-        utime.sleep(3)
+        utime.sleep(0)
         machine.reset()
+
 
 def _main_impl(lcd):
     global DISPLAY_WIDTH, DISPLAY_HEIGHT
@@ -994,24 +1272,22 @@ def _main_impl(lcd):
     global ALERT_DOUBLE_UP, ALERT_DOUBLE_DOWN
     global user_config, HAS_CONFIG
 
-    print(":) booting")
-
-    lcd = ST7735()
-    lcd.fill(BLACK)
-    lcd.show()
+    # Show the logo immediately
+    draw_boot_logo(lcd)
 
     DISPLAY_WIDTH  = lcd.width
     DISPLAY_HEIGHT = lcd.height
 
     check_factory_reset(lcd)
 
+    # -------- Config handling --------
     if not HAS_CONFIG:
         print("No valid config.py found, starting AP config portal")
         ap_config_portal(lcd)
 
-        # After portal returns, try to load the new config
+        # After portal, try to load the new config
         try:
-            import config as cfg  # fresh import after writing file
+            import config as cfg
             user_config = cfg
             if hasattr(user_config, "WIFI_SSID") and hasattr(user_config, "NS_URL"):
                 HAS_CONFIG = True
@@ -1026,7 +1302,7 @@ def _main_impl(lcd):
             lcd.text("Config error", 5, 40, WHITE)
             lcd.text("Rebooting...", 5, 60, WHITE)
             lcd.show()
-            utime.sleep(3)
+            utime.sleep(0)
             machine.reset()
             return
 
@@ -1056,34 +1332,39 @@ def _main_impl(lcd):
     wri_bg     = CWriter(lcd, font_bg,     fgcolor=WHITE, bgcolor=BLACK, verbose=False)
     wri_arrows = CWriter(lcd, font_arrows, fgcolor=WHITE, bgcolor=BLACK, verbose=False)
 
-
-    # Wi-Fi boot retry; if totally broken, reboot (no re-config unless factory reset)
+    # -------- Wi-Fi boot with animated logo --------
     wifi_fail = 0
     while True:
         try:
+            # animate "Connecting" while we try Wi-Fi
+            for i in range(3):
+                draw_logo_with_status(lcd, "Loading", "", i % 4)
+                utime.sleep_ms(500)
+
             connect_wifi(lcd)
             wifi_fail = 0
             break
         except Exception as e:
             wifi_fail += 1
             print("Wi-Fi/NTP error during boot (attempt {}):".format(wifi_fail), e)
-            utime.sleep(5)
+            utime.sleep(0)
             if wifi_fail >= 3:
                 print("Too many Wi-Fi failures, rebooting")
                 lcd.fill(BLACK)
                 lcd.text("Wi-Fi FAILED", 5, 40, WHITE)
                 lcd.text("Rebooting...", 5, 60, WHITE)
                 lcd.show()
-                utime.sleep(3)
+                utime.sleep(0)
                 machine.reset()
                 return
 
-    # Post-connect wait to avoid first EHOSTUNREACH
     print("Post-connect wait to stabilize Wi-Fi...")
-    for _ in range(3):
-        utime.sleep(1)
-        heartbeat("wifi-wait")
+    for i in range(3):
+        draw_logo_with_status(lcd, "Loading", "", i % 4)
+        utime.sleep_ms(500)
 
+
+    # -------- Main loop --------
     processed_data = None
     sync_counter = 0
     last_cmd_check = utime.time()
@@ -1093,7 +1374,7 @@ def _main_impl(lcd):
         if sync_counter >= SYNC_INTERVAL:
             try:
                 ntptime.settime()
-                print("Time re-synced.")
+                
             except Exception as e:
                 print("NTP re-sync error:", e)
             sync_counter = 0
@@ -1120,7 +1401,6 @@ def _main_impl(lcd):
 
         if new_data:
             processed_data = new_data
-            print("Data fetch OK.")
         else:
             print("Fetch failed; using last data.")
 
@@ -1139,11 +1419,13 @@ def _main_impl(lcd):
                 print("Remote command check failed:", e)
 
         heartbeat("main-loop")
-        utime.sleep(5)
+        utime.sleep(0)
 
 
-
+# Keep this at the very end of app_main.py
 if __name__ == "__main__":
     main()
+
+
 
 
