@@ -1,8 +1,7 @@
 {
   "model": "mini",
-  "version": "1.0.4",
+  "version": "1.0.0",
   "files": [
-    { "path": "bootloader.py",  "target": "bootloader.py" },
     { "path": "app_main.py",    "target": "app_main.py" },
     { "path": "writer.py",      "target": "writer.py" },
     { "path": "small_20.py",    "target": "small_20.py" },
