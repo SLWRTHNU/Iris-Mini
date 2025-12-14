@@ -427,6 +427,7 @@ def ensure_dirs_for(target_path):
             pass
 
 
+
 def download_file(remote_path, target_path, lcd):
     """
     Download one file from GitHub (raw) and write it to target_path.
@@ -436,11 +437,11 @@ def download_file(remote_path, target_path, lcd):
     url = RAW_BASE_URL + remote_path
     headers = get_github_headers()
 
-    print("Updating", target_path, "from", url)
+    print("Updating")
 
     # Keep logo; only update bottom status text
     try:
-        draw_bottom_status(lcd, "Updating {}".format(target_path))
+        draw_bottom_status(lcd, "Updating")
     except Exception:
         pass
 
@@ -723,6 +724,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
