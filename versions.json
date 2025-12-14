@@ -1,6 +1,6 @@
 {
   "model": "mini",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "files": [
     { "path": "app_main.py",    "target": "app_main.py" },
     { "path": "writer.py",      "target": "writer.py" },
