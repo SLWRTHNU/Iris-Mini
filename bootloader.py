@@ -4,14 +4,21 @@ import network
 import urequests as requests
 import json
 import os
-import framebuf # <--- ADD THIS IMPORT
-
 
 GITHUB_USER   = "SLWRTHNU"
 GITHUB_REPO   = "Iris-Mini"
 GITHUB_BRANCH = "main"
+
+# GitHub Contents API (works for private repos with token)
+API_BASE = "https://api.github.com/repos/{}/{}/contents/".format(GITHUB_USER, GITHUB_REPO)
+
 VERSIONS_PATH = "versions.json"
-CONTROL_HASH_FILE   = "last_control_hash.txt"
+CONTROL_PATH  = "control.json"
+
+LOCAL_VERSION_FILE = "local_version.txt"
+DEVICE_ID_FILE     = "device_id.txt"
+CONTROL_HASH_FILE  = "last_control_hash.txt"
+
 _DEVICE_ID_CACHE = "" 
 
 RAW_BASE_URL = "https://raw.githubusercontent.com/{}/{}/{}/".format(
@@ -19,10 +26,10 @@ RAW_BASE_URL = "https://raw.githubusercontent.com/{}/{}/{}/".format(
 )
 VERSIONS_URL = RAW_BASE_URL + VERSIONS_PATH
 
+
+
 CONTROL_PATH = "control.json"
-CONTROL_URL = "https://raw.githubusercontent.com/{}/{}/{}/{}".format(
-    GITHUB_USER, GITHUB_REPO, GITHUB_BRANCH, CONTROL_PATH
-)
+CONTROL_URL = RAW_BASE_URL + CONTROL_PATH
 
 LOCAL_VERSION_FILE  = "local_version.txt"
 DEVICE_ID_FILE = "device_id.txt"
@@ -113,7 +120,7 @@ def draw_boot_logo(lcd):
         lcd.blit(fb, 0, 0) # Removed WHITE key argument for RGB565 blit [cite: 4]
     
     # Draw the initial status/ID
-    draw_bottom_status(lcd, "Starting up...") 
+    draw_bottom_status(lcd, "Connecting") 
     print("Boot logo drawn.")
 
 # ---------- NEW STATUS FUNCTION (REPLACES lcd_msg) ----------
@@ -135,7 +142,7 @@ def draw_bottom_status(lcd, status_msg):
     except Exception:
         pass 
         
-    id_text = f"ID: {device_id}"
+    id_text = f"ID:{device_id}"
     
     # 1. Clear the entire bottom bar area to WHITE
     # Clears from Y=118 to Y=128 (10 pixels)
@@ -208,7 +215,7 @@ def _draw_device_id(lcd):
         dev_id = "N/A" # Fallback if ID file is missing
 
     # Format the message
-    id_msg = "ID: {}".format(dev_id)
+    id_msg = "ID:{}".format(dev_id)
 
     # Assume 8x8 font for lcd.text() (standard MicroPython/ST7735)
     FONT_WIDTH = 8
@@ -242,7 +249,7 @@ def load_config_wifi():
     pwd  = getattr(config, "WIFI_PASSWORD", "") or None
 
     if not ssid:
-        print("Config present but WIFI_SSID is empty.")
+        print("No SSID")
         return None, None
 
     return ssid, pwd
@@ -250,19 +257,59 @@ def load_config_wifi():
 
 def get_github_headers():
     """
-    Build headers for GitHub requests.
+    Headers for GitHub API requests.
     Uses GITHUB_TOKEN from config.py if present.
     """
+    token = ""
     try:
         import config
-        token = getattr(config, "GITHUB_TOKEN", "")
+        token = getattr(config, "GITHUB_TOKEN", "") or ""
     except ImportError:
-        token = ""
+        pass
 
-    headers = {}
+    h = {
+        "User-Agent": "Iris-Mini-Pico",
+        "Accept": "application/vnd.github.v3.raw",
+    }
     if token:
-        headers["Authorization"] = "token {}".format(token)
-   
+        h["Authorization"] = "token {}".format(token)
+    return h
+
+def github_api_url(path):
+    # path like "app_main.py" or "lib/foo.py"
+    return API_BASE + path + "?ref=" + GITHUB_BRANCH
+
+def github_get_bytes(path):
+    url = github_api_url(path)
+    headers = get_github_headers()
+    r = None
+    try:
+        r = requests.get(url, headers=headers)
+        status = getattr(r, "status_code", getattr(r, "status", 0))
+        if status != 200:
+            try: r.close()
+            except: pass
+            return None, status
+        data = r.content  # raw bytes because Accept: raw
+        r.close()
+        return data, 200
+    except Exception:
+        try:
+            if r: r.close()
+        except:
+            pass
+        return None, 0
+
+def github_get_json(path):
+    b, status = github_get_bytes(path)
+    if status != 200 or not b:
+        return None, status
+    try:
+        if isinstance(b, bytes):
+            b = b.decode("utf-8")
+        return json.loads(b), 200
+    except Exception:
+        return None, status
 
 
 def draw_logo_with_status(lcd, status_text):
@@ -297,7 +344,7 @@ def draw_logo_with_status(lcd, status_text):
         lcd.text(status_text, 2, BOOT_LOGO_HEIGHT - 14, WHITE)
         lcd.show()
     except Exception as e:
-        print("Bootloader: draw_logo_with_status error:", e)
+        print("Logo Error", e)
 
 
 # ---------------- Wi-Fi ----------------
@@ -307,7 +354,7 @@ def connect_wifi(lcd, ssid, pwd, timeout_sec=10):
     Returns True on success, False on failure.
     """
     if ssid is None or pwd is None:
-        print("No Wi-Fi credentials; skipping Wi-Fi connect.")
+        print("Config Failed")
         return False
 
 
@@ -353,54 +400,11 @@ def save_local_version(version_str):
         print("Failed to write local version file:", e)
 
 # ... (Place this block where fetch_versions_json is currently defined)
-
 def fetch_versions_json():
-    global GITHUB_TOKEN # Ensure GITHUB_TOKEN is accessible if defined later in the file
-
-    print("Attempting to fetch:", VERSIONS_URL)
-    response = None
-    
-    # --- ADDED: Header for GitHub Token ---
-    headers = {}
-    if GITHUB_TOKEN:
-        # GitHub requires "token" in the Authorization header
-        headers['Authorization'] = 'token {}'.format(GITHUB_TOKEN)
-        print("Using GitHub Token for authorization.")
-    # --------------------------------------
-
-    try:
-        # Pass the headers dictionary to the requests.get call
-        response = requests.get(VERSIONS_URL, headers=headers, timeout=15)
-        
-        if response.status_code == 200:
-            print("Fetch successful (HTTP 200).")
-            try:
-                data = response.json()
-                response.close()
-                return data
-            except ValueError as e:
-                print("JSON parsing failed:", e)
-                # print("Received text:", response.text) # Uncomment for deep debugging
-                response.close()
-                return None
-        
-        else:
-            # Handle non-200 responses (e.g., 401 Unauthorized, 404 Not Found)
-            print("HTTP Error:", response.status_code, "fetching versions.json.")
-            if response.status_code == 401 or response.status_code == 403:
-                print("Authentication or permission error. Check GITHUB_TOKEN.")
-            response.close()
-            return None
-
-    except Exception as e:
-        # Handle network errors (DNS, connection, SSL, timeout)
-        print("Network/Connection Error fetching versions.json:", e)
-        if response:
-            try:
-                response.close()
-            except Exception:
-                pass # Already closed or error
-        return None
+    print("Attempting to fetch:", github_api_url(VERSIONS_PATH))
+    data, status = github_get_json(VERSIONS_PATH)
+    print("Fetch status:", status)
+    return data if status == 200 else None
 
 
 def ensure_dirs_for(target_path):
@@ -422,47 +426,63 @@ def ensure_dirs_for(target_path):
         except OSError:
             pass
 
-
 def download_file(remote_path, target_path, lcd):
     """
     Download one file from GitHub (raw) and write it to target_path.
+    Stream to disk in chunks to avoid RAM blowups on large files.
     Returns True/False for success.
     """
     url = RAW_BASE_URL + remote_path
     headers = get_github_headers()
-    msg = "Updating " + target_path
-    print(msg, "from", url)
-    draw_bottom_status(lcd, f"Updating: {target_path}")
 
+    print("Updating", target_path, "from", url)
+    lcd_msg(lcd, ["Updating", target_path])
+
+    r = None
     try:
         r = requests.get(url, headers=headers)
-        try:
-            status = getattr(r, "status_code", getattr(r, "status", 0))
-        except Exception:
-            status = 0
 
+        status = getattr(r, "status_code", getattr(r, "status", 0))
         if status != 200:
             print("Download failed with status", status)
-            r.close()
-            draw_bottom_status(lcd, f"DL failed: {target_path}") # <--- ADD THIS
-            time.sleep(0)
+            try:
+                r.close()
+            except Exception:
+                pass
+            lcd_msg(lcd, ["DL failed", target_path])
+            time.sleep(1)
             return False
 
-        content = r.content
-        r.close()
-
         ensure_dirs_for(target_path)
-        with open(target_path, "wb") as f:
-            f.write(content)
 
-       
+        # Stream the body to file in small chunks
+        with open(target_path, "wb") as f:
+            while True:
+                chunk = r.raw.read(1024)
+                if not chunk:
+                    break
+                f.write(chunk)
+
+        try:
+            r.close()
+        except Exception:
+            pass
+
+        print("Saved", target_path, "OK")
         return True
 
     except Exception as e:
         print("Exception downloading", remote_path, "->", target_path, ":", e)
-        draw_bottom_status(lcd, f"DL error: {remote_path}")
-        time.sleep(0)
+        try:
+            if r:
+                r.close()
+        except Exception:
+            pass
+        lcd_msg(lcd, ["DL error", target_path])
+        time.sleep(1)
         return False
+
+
 
 def perform_update(vers_data, lcd):
     """
@@ -483,7 +503,7 @@ def perform_update(vers_data, lcd):
         print("versions.json has no files[] list.")
         return False
 
-    draw_bottom_status(lcd, f"New version {remote_version}. Updating...") # MODIFIED
+    draw_bottom_status(lcd, f"Updating") # MODIFIED
     print("Updating")
 
     for entry in files:
@@ -495,7 +515,7 @@ def perform_update(vers_data, lcd):
             return False
         
         # Update status bar for each file download
-        draw_bottom_status(lcd, f"Downloading: {remote_path}")
+        draw_bottom_status(lcd, f"Updating")
 
         ok = download_file(remote_path, target_path, lcd)
         if not ok:
@@ -507,7 +527,7 @@ def perform_update(vers_data, lcd):
     draw_bottom_status(lcd, f"Firmware v{remote_version} Update Complete") # MODIFIED
     time.sleep(0)
 
-    print("Update Successful. Restting.")
+    print("Updating")
     machine.reset() # We never return from here
     
 
@@ -578,49 +598,37 @@ def check_remote_commands():
     Check control.json on GitHub for commands targeting this device.
     If this device is listed, perform reboot or force-update.
     """
-    # Ensure we have a persistent ID (from device_id.txt, or auto-generated)
     device_id = get_or_create_device_id()
     if not device_id:
         print("check_remote_commands: no device_id")
         return
 
-    headers = get_github_headers()
     print("Checking remote commands for", device_id)
 
     try:
-        r = requests.get(CONTROL_URL, headers=headers)
-        status = getattr(r, "status_code", getattr(r, "status", 0))
-        print("control.json HTTP status:", status)
-        if status != 200:
-            r.close()
+        data, status = github_get_json(CONTROL_PATH)
+        print("control.json status:", status)
+        if status != 200 or data is None:
             return
 
-        data = r.json()
-        r.close()
+        reboot_ids = data.get("reboot_ids", [])
+        force_update_ids = data.get("force_update_ids", [])
+
+        if device_id in reboot_ids:
+            print("Remote reboot for", device_id)
+            machine.reset()
+
+        if device_id in force_update_ids:
+            print("Remote force-update for", device_id)
+            try:
+                os.remove(LOCAL_VERSION_FILE)
+            except OSError:
+                pass
+            machine.reset()
+
     except Exception as e:
-        print("Error fetching control.json:", e)
-        try:
-            r.close()
-        except Exception:
-            pass
+        print("Error fetching/parsing control.json:", e)
         return
-
-    reboot_ids = data.get("reboot_ids", [])
-    force_update_ids = data.get("force_update_ids", [])
-
-    # IDs are compared as strings, e.g. "0000"
-    if device_id in reboot_ids:
-        print("Remote reboot for", device_id)
-        machine.reset()
-
-    if device_id in force_update_ids:
-        print("Remote update for", device_id)
-        # Clear local version so bootloader will re-download everything
-        try:
-            os.remove(LOCAL_VERSION_FILE)
-        except OSError:
-            pass
-        machine.reset()
 
 
 
@@ -677,7 +685,7 @@ def main():
     vers_data = fetch_versions_json()
     if vers_data is None:
         print("Could not fetch versions.json; running app_main.py anyway.")
-        draw_bottom_status(lcd, "No versions.json. Running app_main.") # MODIFIED
+        draw_bottom_status(lcd, "Connecting") # MODIFIED
         time.sleep(0)
         run_app_main()
         return
