@@ -426,6 +426,7 @@ def ensure_dirs_for(target_path):
         except OSError:
             pass
 
+
 def download_file(remote_path, target_path, lcd):
     """
     Download one file from GitHub (raw) and write it to target_path.
@@ -436,7 +437,12 @@ def download_file(remote_path, target_path, lcd):
     headers = get_github_headers()
 
     print("Updating", target_path, "from", url)
-    lcd_msg(lcd, ["Updating", target_path])
+
+    # Keep logo; only update bottom status text
+    try:
+        draw_bottom_status(lcd, "Updating {}".format(target_path))
+    except Exception:
+        pass
 
     r = None
     try:
@@ -449,8 +455,12 @@ def download_file(remote_path, target_path, lcd):
                 r.close()
             except Exception:
                 pass
-            lcd_msg(lcd, ["DL failed", target_path])
-            time.sleep(1)
+
+            try:
+                draw_bottom_status(lcd, "DL failed: {}".format(target_path))
+            except Exception:
+                pass
+
             return False
 
         ensure_dirs_for(target_path)
@@ -469,6 +479,11 @@ def download_file(remote_path, target_path, lcd):
             pass
 
         print("Saved", target_path, "OK")
+        try:
+            draw_bottom_status(lcd, "Updated {}".format(target_path))
+        except Exception:
+            pass
+
         return True
 
     except Exception as e:
@@ -478,8 +493,12 @@ def download_file(remote_path, target_path, lcd):
                 r.close()
         except Exception:
             pass
-        lcd_msg(lcd, ["DL error", target_path])
-        time.sleep(1)
+
+        try:
+            draw_bottom_status(lcd, "DL error: {}".format(target_path))
+        except Exception:
+            pass
+
         return False
 
 
