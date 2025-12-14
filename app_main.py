@@ -1,5 +1,4 @@
 import utime
-import bootloader
 import network
 import urequests as requests
 import ntptime
@@ -279,7 +278,7 @@ except ImportError:
 
 from writer import CWriter
 import small_20 as font_main
-import large_65 as font_bg
+import large_65_digits as font_bg
 import arrows_30 as font_arrows
 
 # ---------- Colours ----------
@@ -944,7 +943,7 @@ def _draw_device_id(lcd):
         dev_id = "N/A" # Fallback if ID file is missing
 
     # Format the message
-    id_msg = "ID: {}".format(dev_id)
+    id_msg = "ID:{}".format(dev_id)
 
     # Assume 8x8 font for lcd.text() (standard MicroPython/ST7735)
     FONT_WIDTH = 8
@@ -1419,12 +1418,13 @@ def _main_impl(lcd):
                 print("Remote command check failed:", e)
 
         heartbeat("main-loop")
-        utime.sleep(0)
+        utime.sleep(5)
 
 
 # Keep this at the very end of app_main.py
 if __name__ == "__main__":
     main()
+
 
 
 
