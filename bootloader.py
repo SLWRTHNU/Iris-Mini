@@ -36,12 +36,12 @@ DEVICE_ID_FILE = "device_id.txt"
 CONTROL_HASH_FILE   = "last_control_hash.txt"
 
 try:
-    import config
-    GITHUB_TOKEN = config.GITHUB_TOKEN
+    import app_main
+    GITHUB_TOKEN = app_main.GITHUB_TOKEN
     print("Loaded GitHub token for OTA check.")
 except Exception:
     GITHUB_TOKEN = ""
-    print("Could not load config.GITHUB_TOKEN.")
+    print("Could not load app_main.GITHUB_TOKEN.")
     
 try:
     from Pico_LCD_1_8 import LCD_1inch8 as ST7735
@@ -112,7 +112,6 @@ def draw_boot_logo(lcd):
     if lcd is None:
         return None
     
-    lcd.fill(BLACK) # Clear screen once [cite: 3]
     
     fb = load_boot_logo() # This call now works!
     if fb is not None:
@@ -127,7 +126,7 @@ def draw_boot_logo(lcd):
 
 # Cons# Constants for bottom bar text (assuming 8x8 font, 160x128 screen)
 TEXT_HEIGHT = 8
-BAR_HEIGHT = TEXT_HEIGHT + 2 # 10 pixels high for the bar
+BAR_HEIGHT = TEXT_HEIGHT + 1 # 10 pixels high for the bar
 Y_POS = 128 - BAR_HEIGHT + 1 # Text Y coordinate (128 - 10 + 1 = 119)
 STATUS_X = 5 # X coordinate for the status message (left alignment)
 
@@ -141,24 +140,12 @@ def draw_bottom_status(lcd, status_msg):
             device_id = f.read().strip()
     except Exception:
         pass 
-        
     id_text = f"ID:{device_id}"
-    
-    # 1. Clear the entire bottom bar area to WHITE
-    # Clears from Y=118 to Y=128 (10 pixels)
-    # --- CHANGED: Color from BLACK to WHITE ---
     lcd.fill_rect(0, Y_POS - 1, lcd.width, BAR_HEIGHT, WHITE)
-
-    # 2. Draw status message (bottom left)
-    # --- CHANGED: Color from WHITE to BLACK ---
     lcd.text(status_msg, STATUS_X, Y_POS, BLACK) 
-    
-    # 3. Draw device ID (bottom right)
     ID_TEXT_X = lcd.width - (len(id_text) * 8) - 5 
-    # --- CHANGED: Color from WHITE to BLACK ---
     lcd.text(id_text, ID_TEXT_X, Y_POS, BLACK) 
-    
-    lcd.show() # Update display
+    lcd.show()
 
 def init_lcd():
     if not LCD_AVAILABLE:
@@ -258,12 +245,12 @@ def load_config_wifi():
 def get_github_headers():
     """
     Headers for GitHub API requests.
-    Uses GITHUB_TOKEN from config.py if present.
+    Uses GITHUB_TOKEN from app_main.py if present.
     """
     token = ""
     try:
-        import config
-        token = getattr(config, "GITHUB_TOKEN", "") or ""
+        import app_main
+        token = getattr(app_main, "GITHUB_TOKEN", "") or ""
     except ImportError:
         pass
 
@@ -724,6 +711,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
