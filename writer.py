@@ -43,6 +43,8 @@ class Writer:
         if self.devid not in Writer.state:
             Writer.state[self.devid] = DisplayState()
         self.font = font
+        self.char_spacing = 0  # extra pixels between letters (0 = default)
+
         if font.height() >= device.height or font.max_width() >= device.width:
             raise ValueError("Font too large for screen")
         # Allow to work with reverse or normal font mapping
@@ -123,8 +125,12 @@ class Writer:
                 rstr = string[pos + 1 :]
                 string = lstr
 
-        for char in string:
+        for i, char in enumerate(string):
             self._printchar(char, invert)
+            if self.char_spacing and i != (len(string) - 1) and char != "\n":
+                self._getstate().text_col += self.char_spacing
+            
+            
         if rstr is not None:
             self._printchar("\n")
             self._printline(rstr, invert)  # Recurse
@@ -138,6 +144,9 @@ class Writer:
         for char in string[:-1]:
             _, _, char_width = self.font.get_ch(char)
             l += char_width
+            if self.char_spacing:
+                l += self.char_spacing
+
             if oh and l + sc > wd:
                 return True  # All done. Save time.
         char = string[-1]
@@ -210,15 +219,40 @@ class Writer:
         self._get_char(char, recurse)
         if self.glyph is None:
             return  # All done
-        buf = bytearray(self.glyph)
-        if invert:
-            for i, v in enumerate(buf):
-                buf[i] = 0xFF & ~v
-        fbc = framebuf.FrameBuffer(buf, self.char_width, self.char_height, self.map)
-        self.device.blit(fbc, s.text_col, s.text_row)
+        
+        glyph = self.glyph
+        width = self.char_width
+        height = self.char_height
+        
+        # Determine colors based on invert flag
+        fg = self.bgcolor if invert else self.fgcolor
+        bg = self.fgcolor if invert else self.bgcolor
+
+        # Loop through every pixel in the character's font box
+        for y in range(height):
+            for x in range(width):
+                # Calculate which byte and bit we are looking at in the font file
+                byte_idx = (y * ((width + 7) // 8)) + (x // 8)
+                bit_idx = 7 - (x % 8)
+                
+                # If the bit is 1, paint a foreground pixel. If 0, paint background.
+                if (glyph[byte_idx] & (1 << bit_idx)):
+                    self.device.pixel(s.text_col + x, s.text_row + y, fg)
+                else:
+                    self.device.pixel(s.text_col + x, s.text_row + y, bg)
+
         s.text_col += self.char_width
         self.cpos += 1
 
+    def set_spacing(self, pixels=0):
+    # pixels = extra blank columns between characters
+        try:
+            self.char_spacing = max(0, int(pixels))
+        except Exception:
+            self.char_spacing = 0
+
+    
+    
     def tabsize(self, value=None):
         if value is not None:
             self.tab = value
@@ -265,8 +299,9 @@ class CWriter(Writer):
         
         # FINAL CORRECTED LOGIC: This ensures the 1-bit font is correctly mapped to 16-bit colors 
         # after the hardware's BGR issue has been resolved by the 0x78 command.
-        palette.bg(self.fgcolor if invert else self.bgcolor) 
-        palette.fg(self.bgcolor if invert else self.fgcolor)
+        # CORRECTED LOGIC: Swapping fg and bg to match your screen's behavior
+        palette.bg(self.bgcolor if invert else self.fgcolor) 
+        palette.fg(self.fgcolor if invert else self.bgcolor)
         
         self.device.blit(fbc, s.text_col, s.text_row, -1, palette)
         s.text_col += self.char_width
@@ -282,3 +317,4 @@ class CWriter(Writer):
             if bgcolor is not None:
                 self.bgcolor = bgcolor
         return self.fgcolor, self.bgcolor
+
