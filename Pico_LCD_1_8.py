@@ -1,4 +1,4 @@
-from machine import Pin,SPI,PWM
+from machine import Pin, SPI, PWM
 import framebuf
 import time
 
@@ -10,9 +10,8 @@ SCK = 10
 CS = 9
 
 class Palette(framebuf.FrameBuffer):
-    # 2-entry palette for CWriter: index 0 = bg, index 1 = fg
     def __init__(self):
-        buf = bytearray(4)  # 2 pixels * 2 bytes (RGB565)
+        buf = bytearray(4)  # 2 pixels * 2 bytes
         super().__init__(buf, 2, 1, framebuf.RGB565)
 
     def bg(self, color):
@@ -26,208 +25,132 @@ class LCD_1inch8(framebuf.FrameBuffer):
         self.width = 160
         self.height = 128
         
-        self.cs = Pin(CS,Pin.OUT)
-        self.rst = Pin(RST,Pin.OUT)
+        self.cs = Pin(CS, Pin.OUT)
+        self.rst = Pin(RST, Pin.OUT)
+        self.dc = Pin(DC, Pin.OUT)
         
         self.cs(1)
-        self.spi = SPI(1)
-        self.spi = SPI(1,1000_000)
-        self.spi = SPI(1,10000_000,polarity=0, phase=0,sck=Pin(SCK),mosi=Pin(MOSI),miso=None)
-        self.dc = Pin(DC,Pin.OUT)
         self.dc(1)
+        
+        # Reduced speed to 4MHz for better stability on 1.8" ribbons
+        self.spi = SPI(1, 4_000_000, polarity=0, phase=0, sck=Pin(SCK), mosi=Pin(MOSI), miso=None)
+        
         self.buffer = bytearray(self.height * self.width * 2)
         super().__init__(self.buffer, self.width, self.height, framebuf.RGB565)
 
-        # Palette for CWriter (maps 1-bit font pixels to colours)
         self.palette = Palette()
-
         self.init_display()
         
+        # Standard colors
         self.WHITE = 0xFFFF
         self.BLACK = 0x0000
-        self.GREEN = 0x001F
-        self.BLUE  = 0xF800
-        self.RED   = 0x07E0
-
-    def rgb(self, r, g, b):
-        # RGB888 → RGB565 helper (used by CWriter.create_color if ever needed)
-        return ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3)
-
-    def draw_scaled_text(self, text, x, y, color, scale=2):
-        """
-        Draw text using the built-in 8x8 font, scaled up by 'scale'.
-
-        text  : string to draw
-        x, y  : top-left position on the main display
-        color : 16-bit RGB565 color (same as lcd.text)
-        scale : integer scale factor (2 = 16px high, 3 = 24px high, etc.)
-        """
-        import framebuf
-
-        # 1 char = 8x8 in the built-in font
-        char_w = 8
-        char_h = 8
-        w = char_w * len(text)
-        h = char_h
-
-        # Off-screen monochrome buffer
-        buf = bytearray(w * h)
-        fb = framebuf.FrameBuffer(buf, w, h, framebuf.MONO_HLSB)
-
-        fb.fill(0)
-        fb.text(text, 0, 0, 1)  # draw 1-bit text into the temporary buffer
-
-        # Scale each lit pixel into a scale×scale block on the main RGB565 buffer
-        for yy in range(h):
-            for xx in range(w):
-                if fb.pixel(xx, yy):  # pixel is "on" in the mono buffer
-                    for dy in range(scale):
-                        for dx in range(scale):
-                            self.pixel(
-                                x + xx * scale + dx,
-                                y + yy * scale + dy,
-                                color
-                            )
+        self.RED   = 0x00F8 
+        self.GREEN = 0x07E0
+        self.BLUE  = 0x001F
 
     def write_cmd(self, cmd):
-        self.cs(1)
         self.dc(0)
         self.cs(0)
         self.spi.write(bytearray([cmd]))
         self.cs(1)
 
     def write_data(self, buf):
-        self.cs(1)
         self.dc(1)
         self.cs(0)
-        self.spi.write(bytearray([buf]))
+        if isinstance(buf, int):
+            self.spi.write(bytearray([buf]))
+        else:
+            self.spi.write(buf)
         self.cs(1)
 
     def init_display(self):
-        """Initialize dispaly"""  
         self.rst(1)
+        time.sleep_ms(5)
         self.rst(0)
+        time.sleep_ms(5)
         self.rst(1)
+        time.sleep_ms(5)
         
-        self.write_cmd(0x36);
-        self.write_data(0x70);
-        
-        self.write_cmd(0x3A);
-        self.write_data(0x05);
+        # 0x36 MADCTL: Controls orientation and Color Order
+        # 0x70 was your original. 
+        # 0x78 or 0x68 usually swaps Red/Blue while keeping Landscape
+        self.write_cmd(0x36)
+        self.write_data(0x78) 
 
-         #ST7735R Frame Rate
-        self.write_cmd(0xB1);
-        self.write_data(0x01);
-        self.write_data(0x2C);
-        self.write_data(0x2D);
+        self.write_cmd(0x3A) # Interface Pixel Format
+        self.write_data(0x05) # 16-bit/pixel
 
-        self.write_cmd(0xB2);
-        self.write_data(0x01);
-        self.write_data(0x2C);
-        self.write_data(0x2D);
+        # ST7735R Frame Rate
+        self.write_cmd(0xB1); self.write_data(0x01); self.write_data(0x2C); self.write_data(0x2D)
+        self.write_cmd(0xB2); self.write_data(0x01); self.write_data(0x2C); self.write_data(0x2D)
+        self.write_cmd(0xB3); self.write_data(0x01); self.write_data(0x2C); self.write_data(0x2D)
+        self.write_data(0x01); self.write_data(0x2C); self.write_data(0x2D)
 
-        self.write_cmd(0xB3);
-        self.write_data(0x01);
-        self.write_data(0x2C);
-        self.write_data(0x2D);
-        self.write_data(0x01);
-        self.write_data(0x2C);
-        self.write_data(0x2D);
+        self.write_cmd(0xB4); self.write_data(0x07) # Column inversion
 
-        self.write_cmd(0xB4); #Column inversion
-        self.write_data(0x07);
+        # Power Sequence
+        self.write_cmd(0xC0); self.write_data(0xA2); self.write_data(0x02); self.write_data(0x84)
+        self.write_cmd(0xC1); self.write_data(0xC5)
+        self.write_cmd(0xC2); self.write_data(0x0A); self.write_data(0x00)
+        self.write_cmd(0xC3); self.write_data(0x8A); self.write_data(0x2A)
+        self.write_cmd(0xC4); self.write_data(0x8A); self.write_data(0xEE)
+        self.write_cmd(0xC5); self.write_data(0x0E)
 
-        #ST7735R Power Sequence
-        self.write_cmd(0xC0);
-        self.write_data(0xA2);
-        self.write_data(0x02);
-        self.write_data(0x84);
-        self.write_cmd(0xC1);
-        self.write_data(0xC5);
+        # Gamma
+        self.write_cmd(0xe0)
+        self.write_data(bytearray([0x0f,0x1a,0x0f,0x18,0x2f,0x28,0x20,0x22,0x1f,0x1b,0x23,0x37,0x00,0x07,0x02,0x10]))
+        self.write_cmd(0xe1)
+        self.write_data(bytearray([0x0f,0x1b,0x0f,0x17,0x33,0x2c,0x29,0x2e,0x30,0x30,0x39,0x3f,0x00,0x07,0x03,0x10]))
 
-        self.write_cmd(0xC2);
-        self.write_data(0x0A);
-        self.write_data(0x00);
-
-        self.write_cmd(0xC3);
-        self.write_data(0x8A);
-        self.write_data(0x2A);
-        self.write_cmd(0xC4);
-        self.write_data(0x8A);
-        self.write_data(0xEE);
-
-        self.write_cmd(0xC5); #VCOM
-        self.write_data(0x0E);
-
-        #ST7735R Gamma Sequence
-        self.write_cmd(0xe0);
-        self.write_data(0x0f);
-        self.write_data(0x1a);
-        self.write_data(0x0f);
-        self.write_data(0x18);
-        self.write_data(0x2f);
-        self.write_data(0x28);
-        self.write_data(0x20);
-        self.write_data(0x22);
-        self.write_data(0x1f);
-        self.write_data(0x1b);
-        self.write_data(0x23);
-        self.write_data(0x37);
-        self.write_data(0x00);
-        self.write_data(0x07);
-        self.write_data(0x02);
-        self.write_data(0x10);
-
-        self.write_cmd(0xe1);
-        self.write_data(0x0f);
-        self.write_data(0x1b);
-        self.write_data(0x0f);
-        self.write_data(0x17);
-        self.write_data(0x33);
-        self.write_data(0x2c);
-        self.write_data(0x29);
-        self.write_data(0x2e);
-        self.write_data(0x30);
-        self.write_data(0x30);
-        self.write_data(0x39);
-        self.write_data(0x3f);
-        self.write_data(0x00);
-        self.write_data(0x07);
-        self.write_data(0x03);
-        self.write_data(0x10);
-
-        self.write_cmd(0xF0); #Enable test command
-        self.write_data(0x01);
-
-        self.write_cmd(0xF6); #Disable ram power save mode
-        self.write_data(0x00);
-
-            #sleep out
-        self.write_cmd(0x11);
-        #DEV_Delay_ms(120);
-
-        #Turn on the LCD display
-        self.write_cmd(0x29);
+        self.write_cmd(0x11) # Sleep out
+        time.sleep_ms(120)
+        self.write_cmd(0x29) # Display on
 
     def show(self):
+        # These are the most common offsets for the 1.8" Red/Black tab screens
+        X_OFFSET = 1  
+        Y_OFFSET = 2  
+
+        # Column Address Set (X)
         self.write_cmd(0x2A)
         self.write_data(0x00)
-        self.write_data(0x01)
+        self.write_data(X_OFFSET)               # Start X
         self.write_data(0x00)
-        self.write_data(0xA0)
-        
-        
-        
+        self.write_data(X_OFFSET + 160 - 1)     # End X (Exactly 160 pixels wide)
+
+        # Row Address Set (Y)
         self.write_cmd(0x2B)
         self.write_data(0x00)
-        self.write_data(0x02)
+        self.write_data(Y_OFFSET)               # Start Y
         self.write_data(0x00)
-        self.write_data(0x81)
+        self.write_data(Y_OFFSET + 128 - 1)     # End Y (Exactly 128 pixels high)
         
-        self.write_cmd(0x2C)
+        self.write_cmd(0x2C) # Memory Write
         
         self.cs(1)
         self.dc(1)
         self.cs(0)
         self.spi.write(self.buffer)
         self.cs(1)
+        
+    def draw_scaled_text(self, text, x, y, color, scale=2):
+        import framebuf
+        # Create a tiny 1-bit mask of the text
+        w = 8 * len(text)
+        h = 8
+        buf = bytearray((w * h) // 8)
+        fb = framebuf.FrameBuffer(buf, w, h, framebuf.MONO_HLSB)
+        
+        fb.fill(0) # Background of mask is 0
+        fb.text(text, 0, 0, 1) # Text in mask is 1
+        
+        for yy in range(h):
+            for xx in range(w):
+                # We check the mask: if the pixel is NOT 1, we do NOTHING.
+                # This is what prevents the 'box' from appearing.
+                if fb.pixel(xx, yy) == 1:
+                    # Manually draw a block of pixels for the scale
+                    for sy in range(scale):
+                        for sx in range(scale):
+                            # Use the base pixel method to skip all framebuf background logic
+                            self.pixel(x + (xx * scale) + sx, y + (yy * scale) + sy, color)
