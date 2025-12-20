@@ -51,7 +51,6 @@ def gh_api_headers_raw():
         h["Authorization"] = "Bearer " + token
     return h
 
-
 # ---------- Display driver (1.8") ----------
 try:
     from Pico_LCD_1_8 import LCD_1inch8 as LCD_Driver
@@ -172,6 +171,18 @@ def connect_wifi(lcd, ssid, pwd, timeout_sec=10):
         time.sleep_ms(100)
     return True
 
+import socket
+
+
+def wait_for_internet_ready(max_s=5):
+    t0 = time.ticks_ms()
+    while time.ticks_diff(time.ticks_ms(), t0) < max_s * 1000:
+        try:
+            socket.getaddrinfo("api.github.com", 443)
+            return True
+        except Exception as e:
+            time.sleep_ms(250)
+    return False
 
 
 def gh_contents_url(path):
@@ -179,6 +190,8 @@ def gh_contents_url(path):
     path = path.lstrip("/")
     return API_BASE + path + "?ref=" + GITHUB_BRANCH
 
+
+import sys
 
 def fetch_versions_json(lcd):
     url = gh_contents_url(VERSIONS_PATH)
@@ -189,10 +202,9 @@ def fetch_versions_json(lcd):
         print("BOOTLOADER: versions.json HTTP:", r.status_code)
         if r.status_code != 200:
             return None
-        # raw JSON text
         return json.loads(r.text)
     except Exception as e:
-        print("BOOTLOADER: fetch_versions_json error:", e)
+        print("BOOTLOADER: fetch_versions_json error:", repr(e))
         return None
     finally:
         try:
@@ -200,6 +212,7 @@ def fetch_versions_json(lcd):
                 r.close()
         except:
             pass
+
 
 
 def _ensure_dirs(filepath):
@@ -214,7 +227,7 @@ def _ensure_dirs(filepath):
             os.mkdir(cur)
         except:
             pass
- 
+
 
 def gh_download_to_file(path, out_path):
     url = gh_contents_url(path)
@@ -274,10 +287,12 @@ def _safe_swap(target):
         os.remove(bak)
     except:
         pass
-
+ 
 
 def perform_update(vers_data, lcd):
-    # version compare
+    SKIP = ("bootloader.py", "github_token.py", "config.py", "local_version.txt", "device_id.txt")
+
+    # 0) Version compare
     local_v = "0.0.0"
     try:
         with open(LOCAL_VERSION_FILE, "r") as f:
@@ -299,21 +314,22 @@ def perform_update(vers_data, lcd):
         print("BOOTLOADER: Manifest has no files.")
         return False
 
-    # 1) Download all files to .new first
-    for f_info in files:
-        path = f_info.get("path")
-        target = f_info.get("target")
+    # Helper: resolve path/target consistently
+    def _resolve(f_info):
+        p = f_info.get("path")
+        if not p:
+            return None, None
+        t = f_info.get("target") or p.split("/")[-1]
+        return p, t
 
-        if not path:
+    # 1) Download all files to .new first (no overwrites)
+    for f_info in files:
+        path, target = _resolve(f_info)
+        if not path or not target:
             continue
 
-        # If no target specified, default to filename only
-        if not target:
-            target = path.split("/")[-1]
-
-        # For now, do not update bootloader in-place
-        if target == "bootloader.py":
-            print("BOOTLOADER: skipping bootloader.py for now")
+        if target in SKIP:
+            print("BOOTLOADER: skipping download", target)
             continue
 
         tmp = target + ".new"
@@ -324,16 +340,14 @@ def perform_update(vers_data, lcd):
 
         gc.collect()
 
-    # 2) Swap .new into place
+    # 2) Swap .new into place (same skip list)
     for f_info in files:
-        path = f_info.get("path")
-        target = f_info.get("target")
-
-        if not path:
+        path, target = _resolve(f_info)
+        if not path or not target:
             continue
-        if not target:
-            target = path.split("/")[-1]
-        if target == "bootloader.py":
+
+        if target in SKIP:
+            print("BOOTLOADER: skipping swap", target)
             continue
 
         try:
@@ -351,6 +365,7 @@ def perform_update(vers_data, lcd):
 
     print("BOOTLOADER: Updated to", remote_v)
     machine.reset()
+
 
 def debug_list_root():
     url = API_BASE + "?ref=" + GITHUB_BRANCH
@@ -375,13 +390,20 @@ def debug_versions():
 
 # ---------- Runner ----------
 
+import sys
+
 def run_app_main(lcd=None):
     gc.collect()
     try:
         import app_main
         app_main.main(lcd)
     except Exception as e:
-        print("App failed:", e)
+        print("App failed:", repr(e), type(e))
+        try:
+            sys.print_exception(e)
+        except Exception:
+            pass
+
 
 def main():
     print("BOOTLOADER: main() start")
@@ -400,15 +422,19 @@ def main():
         run_app_main(lcd)
         return
 
+    if not wait_for_internet_ready(5):
+        status_error(lcd, 1)
+        run_app_main(lcd)
+        return
+
     vers_data = fetch_versions_json(lcd)
     print("BOOTLOADER: vers_data is", "present" if vers_data else "NONE")
     if vers_data:
         perform_update(vers_data, lcd)
 
-
     run_app_main(lcd)
-
 
 
 if __name__ == "__main__":
     main()
+
