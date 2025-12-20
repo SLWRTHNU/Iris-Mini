@@ -407,6 +407,22 @@ def run_app_main(lcd=None):
 
 def main():
     print("BOOTLOADER: main() start")
+    try:
+    if "bootloader.py.next" in os.listdir():
+        print("BOOTLOADER: applying staged bootloader update")
+        try:
+            os.remove("bootloader.py.old")
+        except:
+            pass
+        try:
+            os.rename("bootloader.py", "bootloader.py.old")
+        except:
+            pass
+        os.rename("bootloader.py.next", "bootloader.py")
+        machine.reset()
+except Exception as e:
+    print("BOOTLOADER: staged update apply failed:", e)
+
 
     lcd = init_lcd()
     draw_boot_logo(lcd)
