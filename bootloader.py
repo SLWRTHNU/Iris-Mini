@@ -9,7 +9,7 @@ import gc
 
 # ---------- GitHub & Paths ----------
 GITHUB_USER   = "SLWRTHNU"
-GITHUB_REPO   = "Iris-Classic"
+GITHUB_REPO   = "Iris-Mini"
 GITHUB_BRANCH = "main"
 RAW_BASE_URL  = "https://raw.githubusercontent.com/{}/{}/{}/".format(GITHUB_USER, GITHUB_REPO, GITHUB_BRANCH)
 API_BASE      = "https://api.github.com/repos/{}/{}/contents/".format(GITHUB_USER, GITHUB_REPO)
@@ -42,6 +42,20 @@ BAR_HEIGHT  = TEXT_HEIGHT + 1
 # Positioning the white status bar at the bottom of 128px height
 Y_POS       = 128 - BAR_HEIGHT + 1
 STATUS_X    = 5
+
+
+
+def gh_headers():
+    h = {"User-Agent": "Pico"}
+    try:
+        import github_token
+        token = getattr(github_token, "GITHUB_TOKEN", "")
+        if token:
+            h["Authorization"] = "token " + token
+    except:
+        pass
+    return h
+
 
 # ---------- LCD Logic ----------
 
@@ -134,48 +148,134 @@ def connect_wifi(lcd, ssid, pwd, timeout_sec=10):
     return True
 
 def fetch_versions_json(lcd):
+    url = RAW_BASE_URL + VERSIONS_PATH
+    print("BOOTLOADER: fetching", url)
     try:
-        # Use headers if token exists in config
-        headers = {"User-Agent": "Pico"}
-        try:
-            import config
-            token = getattr(config, "GITHUB_TOKEN", "")
-            if token: headers["Authorization"] = "token " + token
-        except: pass
-
-        r = requests.get(RAW_BASE_URL + VERSIONS_PATH, headers=headers)
+        r = requests.get(url, headers=gh_headers())
+        print("BOOTLOADER: versions.json HTTP:", r.status_code)
         if r.status_code == 200:
             data = r.json()
             r.close()
             return data
         r.close()
-    except: pass
+    except Exception as e:
+        print("BOOTLOADER: fetch_versions_json error:", e)
     return None
+
+
 
 def perform_update(vers_data, lcd):
     local_v = "0.0.0"
     try:
-        with open(LOCAL_VERSION_FILE, "r") as f: local_v = f.read().strip()
-    except: pass
+        with open(LOCAL_VERSION_FILE, "r") as f:
+            local_v = f.read().strip()
+    except:
+        pass
 
-    remote_v = vers_data.get("version", "0.0.0")
+    remote_v = vers_data.get("version", "0.0.0").strip()
     if local_v == remote_v:
         return True
 
     draw_bottom_status(lcd, "Updating")
-    files = vers_data.get("files", [])
-    for f_info in files:
-        path = f_info["path"]
-        try:
-            r = requests.get(RAW_BASE_URL + path)
-            if r.status_code == 200:
-                with open(path, "wb") as f:
-                    f.write(r.content)
-            r.close()
-        except: return False
 
-    with open(LOCAL_VERSION_FILE, "w") as f: f.write(remote_v)
+    files = vers_data.get("files", [])
+    if not files:
+        return False
+
+    # 1) Download all files to temp files first (do NOT overwrite originals yet)
+    for f_info in files:
+        path = f_info.get("path")
+        target = f_info.get("target", path)  # supports your "target" field
+        if not path or not target:
+            continue
+
+        # For Step 3, do NOT allow bootloader overwrite while running.
+        # Leave bootloader.py out of versions.json for now.
+        if target == "bootloader.py":
+            continue
+
+        url = RAW_BASE_URL + path
+        tmp = target + ".new"
+
+        try:
+            r = requests.get(url, headers=gh_headers())
+            print("GET", path, "HTTP:", r.status_code)
+            if r.status_code != 200:
+                try:
+                    r.close()
+                except:
+                    pass
+                return False
+
+            # Stream to file (fallback to r.content if raw isn't available)
+            with open(tmp, "wb") as f:
+                try:
+                    while True:
+                        chunk = r.raw.read(1024)
+                        if not chunk:
+                            break
+                        f.write(chunk)
+                except:
+                    f.write(r.content)
+
+            try:
+                r.close()
+            except:
+                pass
+
+            gc.collect()
+
+        except Exception as e:
+            print("Download error:", path, e)
+            return False
+
+    # 2) Swap temp files into place
+    for f_info in files:
+        path = f_info.get("path")
+        target = f_info.get("target", path)
+        if not path or not target:
+            continue
+        if target == "bootloader.py":
+            continue
+
+        tmp = target + ".new"
+        bak = target + ".old"
+
+        try:
+            # remove old backup
+            try:
+                os.remove(bak)
+            except:
+                pass
+
+            # backup current file if it exists
+            try:
+                os.rename(target, bak)
+            except:
+                pass
+
+            # move new into place
+            os.rename(tmp, target)
+
+            # cleanup backup after successful swap
+            try:
+                os.remove(bak)
+            except:
+                pass
+
+        except Exception as e:
+            print("Swap error:", target, e)
+            return False
+
+    # 3) Only now mark the device as updated
+    try:
+        with open(LOCAL_VERSION_FILE, "w") as f:
+            f.write(remote_v)
+    except:
+        pass
+
     machine.reset()
+
 
 # ---------- Runner ----------
 
@@ -188,6 +288,8 @@ def run_app_main(lcd=None):
         print("App failed:", e)
 
 def main():
+    print("BOOTLOADER: main() start")
+
     lcd = init_lcd()
     draw_boot_logo(lcd)
 
@@ -203,12 +305,14 @@ def main():
         return
 
     vers_data = fetch_versions_json(lcd)
+    print("BOOTLOADER: vers_data is", "present" if vers_data else "NONE")
     if vers_data:
         perform_update(vers_data, lcd)
 
-    # Handover to app_main without clearing lcd
-    gc.collect()
+
     run_app_main(lcd)
+
+
 
 if __name__ == "__main__":
     main()
