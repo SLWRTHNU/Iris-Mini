@@ -290,7 +290,7 @@ def _safe_swap(target):
  
 
 def perform_update(vers_data, lcd):
-    SKIP = ("bootloader.py", "github_token.py", "config.py", "local_version.txt", "device_id.txt")
+    SKIP = ("bootloader.py", "github_token.py", "config.py", "local_version.txt", "device_id.txt", "Pico_LCD_1_8.py")
 
     # 0) Version compare
     local_v = "0.0.0"
@@ -314,7 +314,6 @@ def perform_update(vers_data, lcd):
         print("BOOTLOADER: Manifest has no files.")
         return False
 
-    # Helper: resolve path/target consistently
     def _resolve(f_info):
         p = f_info.get("path")
         if not p:
@@ -322,7 +321,7 @@ def perform_update(vers_data, lcd):
         t = f_info.get("target") or p.split("/")[-1]
         return p, t
 
-    # 1) Download all files to .new first (no overwrites)
+    # 1) Download all files to .new first
     for f_info in files:
         path, target = _resolve(f_info)
         if not path or not target:
@@ -340,7 +339,7 @@ def perform_update(vers_data, lcd):
 
         gc.collect()
 
-    # 2) Swap .new into place (same skip list)
+    # 2) Swap .new into place
     for f_info in files:
         path, target = _resolve(f_info)
         if not path or not target:
@@ -356,17 +355,34 @@ def perform_update(vers_data, lcd):
             print("BOOTLOADER: swap failed for", target, e)
             return False
 
-    # 3) Update local version last
-        # 3) Update local version last
+    # 3) Update local version last (atomic + verified + flush)
     try:
-        with open(LOCAL_VERSION_FILE, "w") as f:
+        tmpv = LOCAL_VERSION_FILE + ".new"
+        with open(tmpv, "w") as f:
             f.write(remote_v)
-    except:
-        pass
+
+        try:
+            os.remove(LOCAL_VERSION_FILE)
+        except:
+            pass
+        os.rename(tmpv, LOCAL_VERSION_FILE)
+
+        try:
+            os.sync()
+        except:
+            pass
+
+        time.sleep(0.5)
+
+        with open(LOCAL_VERSION_FILE, "r") as f:
+            print("BOOTLOADER: local_version now", f.read().strip())
+
+    except Exception as e:
+        print("BOOTLOADER: failed to write local_version:", repr(e))
+        return False
 
     print("BOOTLOADER: Updated to", remote_v)
 
-    # Make the reboot visible + give USB serial time to flush
     try:
         draw_bottom_status(lcd, "Rebooting")
     except:
@@ -375,6 +391,7 @@ def perform_update(vers_data, lcd):
     gc.collect()
     time.sleep(2)
     machine.reset()
+
 
 
 
@@ -437,51 +454,48 @@ def apply_staged_bootloader_if_present():
 
 def main():
     print("BOOTLOADER: main() start")
+
+    # Apply staged bootloader update once (if present)
     apply_staged_bootloader_if_present()
 
-    # Apply staged bootloader update if present
+    # LCD init + boot logo (only once)
+    lcd = None
     try:
-        if "bootloader.py.next" in os.listdir():
-            print("BOOTLOADER: applying staged bootloader update")
-            try:
-                os.remove("bootloader.py.old")
-            except:
-                pass
-            try:
-                os.rename("bootloader.py", "bootloader.py.old")
-            except:
-                pass
-            os.rename("bootloader.py.next", "bootloader.py")
-            machine.reset()
+        lcd = init_lcd()
     except Exception as e:
-        print("BOOTLOADER: staged update apply failed:", repr(e))
+        print("BOOTLOADER: init_lcd failed:", repr(e))
 
-    lcd = init_lcd()
-    draw_boot_logo(lcd)
+    print("BOOTLOADER: lcd is", "OK" if lcd else "NONE")
+    if lcd:
+        draw_boot_logo(lcd)
 
+    # Load Wi-Fi credentials
     ssid, pwd = load_config_wifi()
     if not ssid:
         status_error(lcd, 20)
         run_app_main(lcd)
         return
 
+    # Connect Wi-Fi
     if not connect_wifi(lcd, ssid, pwd):
         status_error(lcd, 0)
         run_app_main(lcd)
         return
 
+    # Wait for DNS/route to be ready before HTTPS calls
     if not wait_for_internet_ready(5):
         status_error(lcd, 1)
         run_app_main(lcd)
         return
 
+    # Check for updates
     vers_data = fetch_versions_json(lcd)
     print("BOOTLOADER: vers_data is", "present" if vers_data else "NONE")
     if vers_data:
         perform_update(vers_data, lcd)
 
+    # Hand off to app
     run_app_main(lcd)
-
 
 
 if __name__ == "__main__":
