@@ -404,25 +404,44 @@ def run_app_main(lcd=None):
         except Exception:
             pass
 
+def apply_staged_bootloader_if_present():
+    try:
+        if "bootloader.py.next" in os.listdir():
+            print("BOOTLOADER: applying staged bootloader update")
+            try:
+                os.remove("bootloader.py.old")
+            except:
+                pass
+            try:
+                os.rename("bootloader.py", "bootloader.py.old")
+            except:
+                pass
+            os.rename("bootloader.py.next", "bootloader.py")
+            machine.reset()
+    except Exception as e:
+        print("BOOTLOADER: staged update apply failed:", repr(e))
+
 
 def main():
     print("BOOTLOADER: main() start")
-    try:
-    if "bootloader.py.next" in os.listdir():
-        print("BOOTLOADER: applying staged bootloader update")
-        try:
-            os.remove("bootloader.py.old")
-        except:
-            pass
-        try:
-            os.rename("bootloader.py", "bootloader.py.old")
-        except:
-            pass
-        os.rename("bootloader.py.next", "bootloader.py")
-        machine.reset()
-except Exception as e:
-    print("BOOTLOADER: staged update apply failed:", e)
+    apply_staged_bootloader_if_present()
 
+    # Apply staged bootloader update if present
+    try:
+        if "bootloader.py.next" in os.listdir():
+            print("BOOTLOADER: applying staged bootloader update")
+            try:
+                os.remove("bootloader.py.old")
+            except:
+                pass
+            try:
+                os.rename("bootloader.py", "bootloader.py.old")
+            except:
+                pass
+            os.rename("bootloader.py.next", "bootloader.py")
+            machine.reset()
+    except Exception as e:
+        print("BOOTLOADER: staged update apply failed:", repr(e))
 
     lcd = init_lcd()
     draw_boot_logo(lcd)
@@ -449,6 +468,7 @@ except Exception as e:
         perform_update(vers_data, lcd)
 
     run_app_main(lcd)
+
 
 
 if __name__ == "__main__":
