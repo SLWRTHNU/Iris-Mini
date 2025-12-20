@@ -87,30 +87,36 @@ STATUS_X    = 5
 
 # ---------- LCD Logic ----------
 
-def draw_bottom_status(lcd, status_msg):
+def draw_bottom_status(lcd, status_msg, show_id=None):
     if lcd is None:
         return
 
-    # Right-side ID
-    device_id = "N/A"
-    try:
-        with open(DEVICE_ID_FILE, "r") as f:
-            device_id = f.read().strip()
-    except:
-        pass
-    id_text = "ID:{}".format(device_id)
+    # Auto behavior:
+    # Show ID only for "Connecting" and "Loading" (including "Connecting..." etc.)
+    if show_id is None:
+        show_id = status_msg.startswith("Connecting") or status_msg.startswith("Loading")
 
-    # Bottom bar
+    # Draw the white background bar
     lcd.fill_rect(0, Y_POS - 1, lcd.width, BAR_HEIGHT, WHITE)
 
-    # Left status text
+    # Draw Left Status
     lcd.text(status_msg, STATUS_X, Y_POS, BLACK)
 
-    # Right ID text
-    id_x = lcd.width - (len(id_text) * 8) - 5
-    lcd.text(id_text, id_x, Y_POS, BLACK)
+    if show_id:
+        # Right-side ID
+        device_id = "N/A"
+        try:
+            with open(DEVICE_ID_FILE, "r") as f:
+                device_id = f.read().strip()
+        except:
+            pass
+
+        id_text = "ID:{}".format(device_id)
+        id_x = lcd.width - (len(id_text) * 8) - 5
+        lcd.text(id_text, id_x, Y_POS, BLACK)
 
     lcd.show()
+
 
 
 def draw_boot_logo(lcd):
