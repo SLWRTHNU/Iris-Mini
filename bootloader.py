@@ -6,6 +6,8 @@ import urequests as requests
 import json
 import os
 import gc
+import ubinascii
+
 
 # ---------- GitHub & Paths ----------
 GITHUB_USER   = "SLWRTHNU"
@@ -19,6 +21,36 @@ CONTROL_PATH  = "control.json"
 LOCAL_VERSION_FILE = "local_version.txt"
 DEVICE_ID_FILE     = "device_id.txt"
 CONTROL_HASH_FILE  = "last_control_hash.txt"
+
+def _get_token():
+    try:
+        import github_token
+        return getattr(github_token, "GITHUB_TOKEN", "")
+    except:
+        return ""
+
+def gh_api_headers_json():
+    h = {
+        "User-Agent": "Pico",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+    token = _get_token()
+    if token:
+        h["Authorization"] = "Bearer " + token
+    return h
+
+def gh_api_headers_raw():
+    h = {
+        "User-Agent": "Pico",
+        "Accept": "application/vnd.github.v3.raw",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+    token = _get_token()
+    if token:
+        h["Authorization"] = "Bearer " + token
+    return h
+
 
 # ---------- Display driver (1.8") ----------
 try:
@@ -45,16 +77,9 @@ STATUS_X    = 5
 
 
 
-def gh_headers():
-    h = {"User-Agent": "Pico"}
-    try:
-        import github_token
-        token = getattr(github_token, "GITHUB_TOKEN", "")
-        if token:
-            h["Authorization"] = "token " + token
-    except:
-        pass
-    return h
+
+
+
 
 
 # ---------- LCD Logic ----------
@@ -147,24 +172,112 @@ def connect_wifi(lcd, ssid, pwd, timeout_sec=10):
         time.sleep_ms(100)
     return True
 
+
+
+def gh_contents_url(path):
+    # API_BASE already points to .../contents/
+    path = path.lstrip("/")
+    return API_BASE + path + "?ref=" + GITHUB_BRANCH
+
+
 def fetch_versions_json(lcd):
-    url = RAW_BASE_URL + VERSIONS_PATH
-    print("BOOTLOADER: fetching", url)
+    url = gh_contents_url(VERSIONS_PATH)
+    print("BOOTLOADER: fetching (API)", VERSIONS_PATH)
+    r = None
     try:
-        r = requests.get(url, headers=gh_headers())
+        r = requests.get(url, headers=gh_api_headers_raw())
         print("BOOTLOADER: versions.json HTTP:", r.status_code)
-        if r.status_code == 200:
-            data = r.json()
-            r.close()
-            return data
-        r.close()
+        if r.status_code != 200:
+            return None
+        # raw JSON text
+        return json.loads(r.text)
     except Exception as e:
         print("BOOTLOADER: fetch_versions_json error:", e)
-    return None
+        return None
+    finally:
+        try:
+            if r:
+                r.close()
+        except:
+            pass
 
+
+def _ensure_dirs(filepath):
+    # Create folders for targets like "fonts/small_font.py" if you ever use them
+    if "/" not in filepath:
+        return
+    parts = filepath.split("/")[:-1]
+    cur = ""
+    for p in parts:
+        cur = p if cur == "" else (cur + "/" + p)
+        try:
+            os.mkdir(cur)
+        except:
+            pass
+
+
+def gh_download_to_file(path, out_path):
+    url = gh_contents_url(path)
+    r = None
+    try:
+        r = requests.get(url, headers=gh_api_headers_raw())
+        print("GET", path, "HTTP:", r.status_code)
+        if r.status_code != 200:
+            return False
+
+        _ensure_dirs(out_path)
+
+        with open(out_path, "wb") as f:
+            try:
+                while True:
+                    chunk = r.raw.read(1024)
+                    if not chunk:
+                        break
+                    f.write(chunk)
+            except:
+                f.write(r.content)
+
+        return True
+    except Exception as e:
+        print("Download error:", path, e)
+        return False
+    finally:
+        try:
+            if r:
+                r.close()
+        except:
+            pass
+
+
+
+def _safe_swap(target):
+    tmp = target + ".new"
+    bak = target + ".old"
+
+    # remove old backup if present
+    try:
+        os.remove(bak)
+    except:
+        pass
+
+    # backup current target if present
+    try:
+        os.rename(target, bak)
+    except:
+        pass
+
+    # move tmp into place
+    os.rename(tmp, target)
+
+    # cleanup backup after successful swap
+    try:
+        os.remove(bak)
+    except:
+        pass
 
 
 def perform_update(vers_data, lcd):
+    # version compare
     local_v = "0.0.0"
     try:
         with open(LOCAL_VERSION_FILE, "r") as f:
@@ -172,109 +285,92 @@ def perform_update(vers_data, lcd):
     except:
         pass
 
-    remote_v = vers_data.get("version", "0.0.0").strip()
+    remote_v = (vers_data.get("version") or "0.0.0").strip()
+    print("BOOTLOADER: update needed", local_v, "->", remote_v)
+
     if local_v == remote_v:
+        print("BOOTLOADER: No update needed.")
         return True
 
     draw_bottom_status(lcd, "Updating")
 
     files = vers_data.get("files", [])
     if not files:
+        print("BOOTLOADER: Manifest has no files.")
         return False
 
-    # 1) Download all files to temp files first (do NOT overwrite originals yet)
+    # 1) Download all files to .new first
     for f_info in files:
         path = f_info.get("path")
-        target = f_info.get("target", path)  # supports your "target" field
-        if not path or not target:
+        target = f_info.get("target")
+
+        if not path:
             continue
 
-        # For Step 3, do NOT allow bootloader overwrite while running.
-        # Leave bootloader.py out of versions.json for now.
+        # If no target specified, default to filename only
+        if not target:
+            target = path.split("/")[-1]
+
+        # For now, do not update bootloader in-place
         if target == "bootloader.py":
-            continue
-
-        url = RAW_BASE_URL + path
-        tmp = target + ".new"
-
-        try:
-            r = requests.get(url, headers=gh_headers())
-            print("GET", path, "HTTP:", r.status_code)
-            if r.status_code != 200:
-                try:
-                    r.close()
-                except:
-                    pass
-                return False
-
-            # Stream to file (fallback to r.content if raw isn't available)
-            with open(tmp, "wb") as f:
-                try:
-                    while True:
-                        chunk = r.raw.read(1024)
-                        if not chunk:
-                            break
-                        f.write(chunk)
-                except:
-                    f.write(r.content)
-
-            try:
-                r.close()
-            except:
-                pass
-
-            gc.collect()
-
-        except Exception as e:
-            print("Download error:", path, e)
-            return False
-
-    # 2) Swap temp files into place
-    for f_info in files:
-        path = f_info.get("path")
-        target = f_info.get("target", path)
-        if not path or not target:
-            continue
-        if target == "bootloader.py":
+            print("BOOTLOADER: skipping bootloader.py for now")
             continue
 
         tmp = target + ".new"
-        bak = target + ".old"
-
-        try:
-            # remove old backup
-            try:
-                os.remove(bak)
-            except:
-                pass
-
-            # backup current file if it exists
-            try:
-                os.rename(target, bak)
-            except:
-                pass
-
-            # move new into place
-            os.rename(tmp, target)
-
-            # cleanup backup after successful swap
-            try:
-                os.remove(bak)
-            except:
-                pass
-
-        except Exception as e:
-            print("Swap error:", target, e)
+        ok = gh_download_to_file(path, tmp)
+        if not ok:
+            print("BOOTLOADER: Download failed:", path)
             return False
 
-    # 3) Only now mark the device as updated
+        gc.collect()
+
+    # 2) Swap .new into place
+    for f_info in files:
+        path = f_info.get("path")
+        target = f_info.get("target")
+
+        if not path:
+            continue
+        if not target:
+            target = path.split("/")[-1]
+        if target == "bootloader.py":
+            continue
+
+        try:
+            _safe_swap(target)
+        except Exception as e:
+            print("BOOTLOADER: swap failed for", target, e)
+            return False
+
+    # 3) Update local version last
     try:
         with open(LOCAL_VERSION_FILE, "w") as f:
             f.write(remote_v)
     except:
         pass
 
+    print("BOOTLOADER: Updated to", remote_v)
     machine.reset()
+
+def debug_list_root():
+    url = API_BASE + "?ref=" + GITHUB_BRANCH
+    h = gh_api_headers_raw()
+    print("Auth header:", "Authorization" in h)
+    print("URL:", url)
+    r = requests.get(url, headers=h)
+    print("HTTP:", r.status_code)
+    print(r.text[:300])
+    r.close()
+
+def debug_versions():
+    url = gh_contents_url(VERSIONS_PATH)
+    h = gh_api_headers_raw()
+    print("Auth header:", "Authorization" in h)
+    print("URL:", url)
+    r = requests.get(url, headers=h)
+    print("HTTP:", r.status_code)
+    print(r.text[:300])
+    r.close()
 
 
 # ---------- Runner ----------
