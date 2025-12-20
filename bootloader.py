@@ -357,6 +357,7 @@ def perform_update(vers_data, lcd):
             return False
 
     # 3) Update local version last
+        # 3) Update local version last
     try:
         with open(LOCAL_VERSION_FILE, "w") as f:
             f.write(remote_v)
@@ -364,7 +365,19 @@ def perform_update(vers_data, lcd):
         pass
 
     print("BOOTLOADER: Updated to", remote_v)
+
+    # Make the reboot visible + give USB serial time to flush
+    try:
+        draw_bottom_status(lcd, "Rebooting")
+    except:
+        pass
+
+    gc.collect()
+    time.sleep(2)
     machine.reset()
+
+
+
 
 
 def debug_list_root():
