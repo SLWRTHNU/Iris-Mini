@@ -214,7 +214,7 @@ def _ensure_dirs(filepath):
             os.mkdir(cur)
         except:
             pass
-
+ 
 
 def gh_download_to_file(path, out_path):
     url = gh_contents_url(path)
