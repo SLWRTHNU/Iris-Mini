@@ -51,6 +51,10 @@ def gh_api_headers_raw():
         h["Authorization"] = "Bearer " + token
     return h
 
+def updating_progress(lcd, i, total, phase="Updating"):
+    msg = "{} {}/{}".format(phase, i, total)
+    draw_bottom_status(lcd, msg)
+
 # ---------- Display driver (1.8") ----------
 try:
     from Pico_LCD_1_8 import LCD_1inch8 as LCD_Driver
@@ -83,6 +87,53 @@ STATUS_X    = 5
 
 # ---------- LCD Logic ----------
 
+def draw_bottom_status(lcd, status_msg):
+    if lcd is None:
+        return
+
+    # Right-side ID
+    device_id = "N/A"
+    try:
+        with open(DEVICE_ID_FILE, "r") as f:
+            device_id = f.read().strip()
+    except:
+        pass
+    id_text = "ID:{}".format(device_id)
+
+    # Bottom bar
+    lcd.fill_rect(0, Y_POS - 1, lcd.width, BAR_HEIGHT, WHITE)
+
+    # Left status text
+    lcd.text(status_msg, STATUS_X, Y_POS, BLACK)
+
+    # Right ID text
+    id_x = lcd.width - (len(id_text) * 8) - 5
+    lcd.text(id_text, id_x, Y_POS, BLACK)
+
+    lcd.show()
+
+
+def draw_boot_logo(lcd):
+    if lcd is None:
+        return
+
+    expected = LOGO_W * LOGO_H * 2  # 40960 for 160x128 RGB565
+
+    try:
+        st = os.stat(LOGO_FILE)
+        if st[6] != expected:
+            print("Logo size mismatch. Expected", expected, "got", st[6])
+            lcd.fill(BLACK)
+        else:
+            with open(LOGO_FILE, "rb") as f:
+                f.readinto(lcd.buffer)
+    except Exception as e:
+        print("Logo error:", repr(e))
+        lcd.fill(BLACK)
+
+    # Only one screen refresh: the bottom status draws + calls lcd.show()
+    draw_bottom_status(lcd, "Connecting")
+
 def init_lcd():
     if LCD_Driver is None:
         return None
@@ -99,27 +150,28 @@ def init_lcd():
         print("LCD init failed:", e)
         return None
 
-def draw_bottom_status(lcd, status_msg):
-    if lcd is None: return
-    
-    # Get ID for the right side
-    device_id = "N/A"
+def draw_boot_logo(lcd):
+    if lcd is None:
+        return
+
+    expected = LOGO_W * LOGO_H * 2  # 160*128*2 = 40960
+
     try:
-        if os.stat(DEVICE_ID_FILE):
-            with open(DEVICE_ID_FILE, "r") as f:
-                device_id = f.read().strip()
-    except Exception: pass
+        st = os.stat(LOGO_FILE)
+        if st[6] != expected:
+            print("Logo size mismatch. Expected", expected, "got", st[6])
+            lcd.fill(BLACK)
+        else:
+            with open(LOGO_FILE, "rb") as f:
+                f.readinto(lcd.buffer)
+    except Exception as e:
+        print("Logo error:", repr(e))
+        lcd.fill(BLACK)
 
-    id_text = "ID:{}".format(device_id)
+    # IMPORTANT: do not call lcd.show() here
+    # draw_bottom_status() will call lcd.show() once after it draws the bar
+    draw_bottom_status(lcd, "Connecting")
 
-    # Draw the white background bar
-    lcd.fill_rect(0, Y_POS - 1, lcd.width, BAR_HEIGHT, WHITE)
-    # Draw Left Status
-    lcd.text(status_msg, STATUS_X, Y_POS, BLACK)
-    # Draw Right ID
-    id_x = lcd.width - (len(id_text) * 8) - 5
-    lcd.text(id_text, id_x, Y_POS, BLACK)
-    lcd.show()
 
 def draw_boot_logo(lcd):
     if lcd is None: return
@@ -290,7 +342,14 @@ def _safe_swap(target):
  
 
 def perform_update(vers_data, lcd):
-    SKIP = ("bootloader.py", "github_token.py", "config.py", "local_version.txt", "device_id.txt", "Pico_LCD_1_8.py")
+    SKIP = (
+    "bootloader.py",
+    "github_token.py",
+    "config.py",
+    "local_version.txt",
+    "device_id.txt",
+    "Pico_LCD_1_8.py",
+    )
 
     # 0) Version compare
     local_v = "0.0.0"
@@ -307,13 +366,6 @@ def perform_update(vers_data, lcd):
         print("BOOTLOADER: No update needed.")
         return True
 
-    draw_bottom_status(lcd, "Updating")
-
-    files = vers_data.get("files", [])
-    if not files:
-        print("BOOTLOADER: Manifest has no files.")
-        return False
-
     def _resolve(f_info):
         p = f_info.get("path")
         if not p:
@@ -321,15 +373,37 @@ def perform_update(vers_data, lcd):
         t = f_info.get("target") or p.split("/")[-1]
         return p, t
 
-    # 1) Download all files to .new first
+    def _updating(i, total):
+        try:
+            pct = int((i * 100) / total) if total else 100
+            draw_bottom_status(lcd, "Updating {}%".format(pct))
+        except:
+            pass
+
+    files = vers_data.get("files", [])
+    if not files:
+        print("BOOTLOADER: Manifest has no files.")
+        return False
+
+    # Build worklist (exclude skipped targets)
+    work = []
     for f_info in files:
         path, target = _resolve(f_info)
         if not path or not target:
             continue
-
         if target in SKIP:
-            print("BOOTLOADER: skipping download", target)
             continue
+        work.append((path, target))
+
+    total = len(work)
+    if total == 0:
+        print("BOOTLOADER: nothing to update (all skipped?)")
+        return True
+
+    # 1) Download all files to .new first (show progress here only)
+    for idx, (path, target) in enumerate(work, start=1):
+        _updating(idx, total)
+        print("BOOTLOADER: downloading", idx, "/", total, target)
 
         tmp = target + ".new"
         ok = gh_download_to_file(path, tmp)
@@ -339,16 +413,15 @@ def perform_update(vers_data, lcd):
 
         gc.collect()
 
-    # 2) Swap .new into place
-    for f_info in files:
-        path, target = _resolve(f_info)
-        if not path or not target:
-            continue
+    # Lock status at 100% during swap (no second progress sweep)
+    try:
+        draw_bottom_status(lcd, "Updating 100%")
+    except:
+        pass
 
-        if target in SKIP:
-            print("BOOTLOADER: skipping swap", target)
-            continue
-
+    # 2) Swap .new into place (no progress updates)
+    for idx, (path, target) in enumerate(work, start=1):
+        print("BOOTLOADER: swapping", idx, "/", total, target)
         try:
             _safe_swap(target)
         except Exception as e:
@@ -395,8 +468,6 @@ def perform_update(vers_data, lcd):
 
 
 
-
-
 def debug_list_root():
     url = API_BASE + "?ref=" + GITHUB_BRANCH
     h = gh_api_headers_raw()
@@ -424,15 +495,33 @@ import sys
 
 def run_app_main(lcd=None):
     gc.collect()
+    print("BOOTLOADER: handoff -> app_main")
+
+    try:
+        draw_bottom_status(lcd, "Loading")
+    except:
+        pass
+
     try:
         import app_main
-        app_main.main(lcd)
+        try:
+            app_main.main(lcd)
+        except TypeError:
+            app_main.main()
     except Exception as e:
-        print("App failed:", repr(e), type(e))
+        print("APP CRASH:", repr(e))
         try:
             sys.print_exception(e)
-        except Exception:
+        except:
             pass
+        try:
+            draw_bottom_status(lcd, "ERR:050")
+        except:
+            pass
+        time.sleep(2)
+
+
+
 
 def apply_staged_bootloader_if_present():
     try:
@@ -455,10 +544,13 @@ def apply_staged_bootloader_if_present():
 def main():
     print("BOOTLOADER: main() start")
 
-    # Apply staged bootloader update once (if present)
-    apply_staged_bootloader_if_present()
+    # 0) Apply staged bootloader update once
+    try:
+        apply_staged_bootloader_if_present()
+    except Exception as e:
+        print("BOOTLOADER: staged update apply failed:", repr(e))
 
-    # LCD init + boot logo (only once)
+    # 1) LCD init
     lcd = None
     try:
         lcd = init_lcd()
@@ -466,36 +558,95 @@ def main():
         print("BOOTLOADER: init_lcd failed:", repr(e))
 
     print("BOOTLOADER: lcd is", "OK" if lcd else "NONE")
-    if lcd:
-        draw_boot_logo(lcd)
 
-    # Load Wi-Fi credentials
-    ssid, pwd = load_config_wifi()
+    # 2) Draw logo + show Connecting
+    try:
+        if lcd:
+            draw_boot_logo(lcd)  # should end by calling draw_bottom_status(...,"Connecting")
+    except Exception as e:
+        print("BOOTLOADER: draw_boot_logo failed:", repr(e))
+        try:
+            sys.print_exception(e)
+        except:
+            pass
+        try:
+            draw_bottom_status(lcd, "ERR:010")
+        except:
+            pass
+
+    # 3) Wi-Fi credentials
+    try:
+        ssid, pwd = load_config_wifi()
+    except Exception as e:
+        print("BOOTLOADER: load_config_wifi failed:", repr(e))
+        try:
+            sys.print_exception(e)
+        except:
+            pass
+        try:
+            draw_bottom_status(lcd, "ERR:020")
+        except:
+            pass
+        run_app_main(lcd)
+        return
+
     if not ssid:
+        print("BOOTLOADER: no ssid")
         status_error(lcd, 20)
         run_app_main(lcd)
         return
 
-    # Connect Wi-Fi
+    # 4) Connect Wi-Fi
     if not connect_wifi(lcd, ssid, pwd):
+        print("BOOTLOADER: wifi connect failed")
         status_error(lcd, 0)
         run_app_main(lcd)
         return
 
-    # Wait for DNS/route to be ready before HTTPS calls
+    # 5) Internet ready
     if not wait_for_internet_ready(5):
+        print("BOOTLOADER: internet not ready")
         status_error(lcd, 1)
         run_app_main(lcd)
         return
 
-    # Check for updates
-    vers_data = fetch_versions_json(lcd)
-    print("BOOTLOADER: vers_data is", "present" if vers_data else "NONE")
-    if vers_data:
-        perform_update(vers_data, lcd)
+    # 6) Update check
+    vers_data = None
+    try:
+        vers_data = fetch_versions_json(lcd)
+    except Exception as e:
+        print("BOOTLOADER: fetch_versions_json failed:", repr(e))
+        try:
+            sys.print_exception(e)
+        except:
+            pass
 
-    # Hand off to app
+    print("BOOTLOADER: vers_data is", "present" if vers_data else "NONE")
+
+    if vers_data:
+        try:
+            perform_update(vers_data, lcd)
+        except Exception as e:
+            print("BOOTLOADER: perform_update failed:", repr(e))
+            try:
+                sys.print_exception(e)
+            except:
+                pass
+            try:
+                draw_bottom_status(lcd, "ERR:030")
+            except:
+                pass
+
+    # 7) Hand off
+    print("BOOTLOADER: about to handoff")
+    try:
+        draw_bottom_status(lcd, "Loading...")
+    except:
+        pass
+
     run_app_main(lcd)
+
+
 
 
 if __name__ == "__main__":
