@@ -10,6 +10,5 @@
     { "path": "Pico_LCD_1_8.py","target": "Pico_LCD_1_8.py" },
     { "path": "logo.bin",      "target": "logo.bin" },
     { "path": "heart.py",      "target": "heart.py" },
-    { "path": "bootloader.py", "target": "bootloader.py" }
   ]
 }
