@@ -1,4 +1,5 @@
 {
-    "reboot_ids": ["2112"],
-    "force_update_ids": []
+  "rev": 2,
+  "reboot_ids": ["2112"],
+  "force_update_ids": []
 }
