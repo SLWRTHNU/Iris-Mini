@@ -5,6 +5,7 @@ import ntptime
 import urequests as requests
 import gc
 from machine import Timer
+import control_poll
 
 # Optional: not all MicroPython builds have setdefaulttimeout()
 try:
@@ -291,12 +292,12 @@ def main(lcd=None):
         lcd.show = _show
 
     w_small = CWriter(lcd, font_small, fgcolor=WHITE, bgcolor=BLACK, verbose=False)
-    w_small.set_spacing(3) # Tighter spacing for 1.8"   
+    w_small.set_spacing(3) # Tighter spacing for 1.8"
     w_big = CWriter(lcd, font_big, fgcolor=WHITE, bgcolor=BLACK, verbose=False)
     w_arrow = CWriter(lcd, font_arrows, fgcolor=WHITE, bgcolor=BLACK, verbose=False)
     w_heart = CWriter(lcd, font_heart, fgcolor=RED, bgcolor=BLACK, verbose=False)
     w_arrow.set_spacing(8) # Tighter spacing for 1.8"
-    
+
     # Initial Loading Call
     draw_screen(lcd, w_small, w_big, w_arrow, w_heart, None, hb_state)
 
@@ -304,7 +305,6 @@ def main(lcd=None):
     ntp_sync()
     ok = ntp_sync()
     print("NTP:", "OK" if ok else "FAILED", "now_unix_s:", now_unix_s())
-
 
     FETCH_MS = 15000
     last = None
@@ -332,7 +332,12 @@ def main(lcd=None):
                 last = parsed
             fetch_next = utime.ticks_add(now, FETCH_MS)
 
+        # Remote control poll (reboot / force update). Internally rate-limited.
+        control_poll.tick(lcd)
+
         utime.sleep_ms(10)
+
 
 if __name__ == "__main__":
     main()
+
