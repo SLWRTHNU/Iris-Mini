@@ -19,7 +19,6 @@ except Exception:
 from config import * # noqa
 
 # ---------- Display driver ----------
-# Adjusted for 1.8" Display
 try:
     from Pico_LCD_1_8 import LCD_1inch8 as LCD_Driver
 except ImportError:
@@ -34,6 +33,7 @@ import small_font as font_small
 import large_font as font_big
 import arrows_font as font_arrows
 import heart as font_heart
+import delta as font_delta # Imported as font_delta to avoid naming conflicts
 
 # ---------- Colors ----------
 BLACK  = 0x0000
@@ -46,7 +46,6 @@ hb_state = True
 
 # ---------- Helpers ----------
 def get_device_id():
-    """Reads the persistent ID created by the bootloader."""
     try:
         with open("device_id.txt", "r") as f:
             return f.read().strip()
@@ -155,70 +154,46 @@ def fmt_delta(delta_val) -> str:
         return "{:+.0f}".format(delta_val)
     return "{:+.1f}".format(delta_val)
 
-UNIX_2000_OFFSET = 946684800  # seconds between 1970-01-01 and 2000-01-01
+UNIX_2000_OFFSET = 946684800
 
 def now_unix_s():
     t = utime.time()
-    # Many MicroPython ports (including RP2) use a 2000-based epoch.
-    # Nightscout's `date` is Unix epoch (1970) in ms.
-    if t < 1200000000:  # heuristic: "too small" to be modern Unix time
+    if t < 1200000000:
         return t + UNIX_2000_OFFSET
     return t
 
-
-def draw_screen(lcd, w_small, w_big, w_arrow, w_heart, last, hb_state): 
-    # --- LOADING STATE (Status bar over logo) ---
+def draw_screen(lcd, w_small, w_big, w_arrow, w_heart, w_delta_icon, last, hb_state): 
+    # --- LOADING STATE ---
     if not last:
-        # 1.8" screen is 128px high. 
-        TEXT_HEIGHT = 7
-        BAR_HEIGHT  = TEXT_HEIGHT + 4
-        # Positioning the white status bar at the bottom of 128px height
-        Y_POS       = 128 - BAR_HEIGHT + 1
-        STATUS_X    = 5
-        
+        BAR_HEIGHT = 11
+        Y_POS = 128 - BAR_HEIGHT + 1
+        STATUS_X = 5
         device_id = get_device_id()
         id_text = "ID:{}".format(device_id)
-
-        # Draw a WHITE bar so BLACK text is visible
         lcd.fill_rect(0, Y_POS, lcd.width, BAR_HEIGHT, WHITE)
-        
-        # Use WHITE for text if the background is BLACK, 
-        # or BLACK text if the bar is WHITE. Let's do Black text on White bar:
         lcd.text("Loading...", STATUS_X, Y_POS + 1, BLACK)
-        
         id_x = lcd.width - (len(id_text) * 8) - 5
         lcd.text(id_text, id_x, Y_POS + 2, BLACK)
-        
         lcd.show()
         return         
 
-    # --- DATA STATE (Full UI) ---
-    lcd.fill(BLACK) # This clears the logo/status bar once data arrives
-    
-    # ... (Rest of your data drawing code stays the same)
-
+    # --- DATA STATE ---
+    lcd.fill(BLACK)
     W, H = lcd.width, lcd.height # 160, 128
-    M = 4 # Reduced margin for smaller screen
+    M = 4 
     
-    # 1. Extract and Process Data
     raw_s = last["time_ms"] // 1000
-    
     age_s = now_unix_s() - raw_s
-    if age_s < 0:
-        age_s = 0
-        
-    # Rounding helps match what you see in Nightscout’s UI more closely
-    mins = int((age_s + 30) // 60)  # +30s = round-to-nearest-minute
+    if age_s < 0: age_s = 0
+    mins = int((age_s + 30) // 60)
 
     bg_val = last["bg"]
     direction = last["direction"]
-    
     bg_text = fmt_bg(bg_val)
     arrow_text = last["arrow"]
     delta_text = fmt_delta(last["delta"])
     age_text = "{} {} ago".format(mins, "min" if mins == 1 else "mins")
     
-    # 2. Threshold Logic
     age_color = RED if mins >= STALE_MIN else WHITE
     bg_color = WHITE
     if bg_val <= LOW_THRESHOLD:
@@ -232,8 +207,10 @@ def draw_screen(lcd, w_small, w_big, w_arrow, w_heart, last, hb_state):
     elif ALERT_DOUBLE_DOWN and direction == "DoubleDown":
         arrow_color = RED
 
-    # 3. Layout Calculations
-    small_h, big_h, arrow_h, heart_h = font_small.height(), font_big.height(), font_arrows.height(), font_heart.height()
+    small_h = font_small.height()
+    big_h = font_big.height()
+    arrow_h = font_arrows.height()
+    heart_h = font_heart.height()
     bottom_h = max(small_h, arrow_h)
 
     y_age = M
@@ -243,7 +220,7 @@ def draw_screen(lcd, w_small, w_big, w_arrow, w_heart, last, hb_state):
     y_delta = y_bottom_base + (bottom_h - small_h) // 2
 
     # Draw Age
-    w_small.setcolor(BLACK,age_color)
+    w_small.setcolor(BLACK, age_color)
     age_w = w_small.stringlen(age_text)
     x_age = (W - age_w) // 2
     w_small.set_textpos(lcd, y_age, x_age)
@@ -252,7 +229,6 @@ def draw_screen(lcd, w_small, w_big, w_arrow, w_heart, last, hb_state):
     # Draw Heart
     if hb_state:
         w_heart.setcolor(BLACK, RED)
-        # Reduced heart gap to 5 to save space
         w_heart.set_textpos(lcd, y_age + (small_h - heart_h) // 2, x_age + age_w + 5)
         w_heart.printstring("T")
 
@@ -264,16 +240,44 @@ def draw_screen(lcd, w_small, w_big, w_arrow, w_heart, last, hb_state):
 
     # Draw Trend Arrow
     w_arrow.setcolor(BLACK, arrow_color)
-    # Use y_arrow (calculated) and M (margin)
     w_arrow.set_textpos(lcd, y_arrow, M) 
     w_arrow.printstring(arrow_text)
 
-    # Draw Delta
+    # Draw Delta (Vertically Centered Icon + Adjustable Gap)
     if delta_text:
+        sign = delta_text[0]  # "+" or "-"
+        val_num = delta_text[1:] # the numbers
+        
+        # --- ADJUST THESE CONTROLS ---
+        gap = 6          # Horizontal space between icon and number
+        v_offset = -3    # Fine-tune vertical center (e.g., -2 to move up, 2 to move down)
+        # -----------------------------
+
         w_small.setcolor(BLACK, WHITE)
-        x_delta = W - M - w_small.stringlen(delta_text)
-        w_small.set_textpos(lcd, y_delta, x_delta)
-        w_small.printstring(delta_text)
+        w_delta_icon.setcolor(BLACK, WHITE)
+        
+        # 1. Calculate heights for vertical centering
+        # We calculate the difference in height to offset the Y position
+        h_small = font_small.height()
+        h_delta = font_delta.height()
+        # This formula finds the Y that puts the middle of the icon 
+        # at the middle of the small text
+        y_delta_centered = y_delta + (h_small - h_delta) // 2 + v_offset
+
+        # 2. Calculate Horizontal positions (Right Aligned)
+        num_w = w_small.stringlen(val_num)
+        sign_w = w_delta_icon.stringlen(sign)
+        
+        x_num = W - M - num_w
+        x_sign = x_num - sign_w - gap
+        
+        # 3. Render Icon (using the calculated centered Y)
+        w_delta_icon.set_textpos(lcd, y_delta_centered, x_sign)
+        w_delta_icon.printstring(sign)
+        
+        # 4. Render Number (using the original Y)
+        w_small.set_textpos(lcd, y_delta, x_num)
+        w_small.printstring(val_num)
 
     lcd.show()
 
@@ -282,30 +286,28 @@ def main(lcd=None):
     gc.collect()
 
     if lcd is None:
-        # Initializing the 1.8" Driver
         lcd = LCD_Driver()
 
-    # Apply .show() shim if driver uses show_up()
     if not hasattr(lcd, "show") and hasattr(lcd, "show_up"):
         def _show():
             lcd.show_up()
         lcd.show = _show
 
+    # Initialize Writers
     w_small = CWriter(lcd, font_small, fgcolor=WHITE, bgcolor=BLACK, verbose=False)
-    w_small.set_spacing(3) # Tighter spacing for 1.8"
+    w_small.set_spacing(3)
     w_big = CWriter(lcd, font_big, fgcolor=WHITE, bgcolor=BLACK, verbose=False)
     w_arrow = CWriter(lcd, font_arrows, fgcolor=WHITE, bgcolor=BLACK, verbose=False)
     w_heart = CWriter(lcd, font_heart, fgcolor=RED, bgcolor=BLACK, verbose=False)
-    w_arrow.set_spacing(8) # Tighter spacing for 1.8"
+    w_delta_icon = CWriter(lcd, font_delta, fgcolor=WHITE, bgcolor=BLACK, verbose=False)
+    w_arrow.set_spacing(8)
 
     # Initial Loading Call
-    draw_screen(lcd, w_small, w_big, w_arrow, w_heart, None, hb_state)
+    draw_screen(lcd, w_small, w_big, w_arrow, w_heart, w_delta_icon, None, hb_state)
 
     connect_wifi(WIFI_SSID, WIFI_PASSWORD)
     ntp_sync()
-    ok = ntp_sync()
-    print("NTP:", "OK" if ok else "FAILED", "now_unix_s:", now_unix_s())
-
+    
     FETCH_MS = 15000
     last = None
     fetch_next = utime.ticks_ms()
@@ -323,7 +325,7 @@ def main(lcd=None):
 
         if hb_state != last_hb_state:
             last_hb_state = hb_state
-            draw_screen(lcd, w_small, w_big, w_arrow, w_heart, last, hb_state)
+            draw_screen(lcd, w_small, w_big, w_arrow, w_heart, w_delta_icon, last, hb_state)
 
         if utime.ticks_diff(now, fetch_next) >= 0:
             data = fetch_ns_entries()
@@ -332,12 +334,8 @@ def main(lcd=None):
                 last = parsed
             fetch_next = utime.ticks_add(now, FETCH_MS)
 
-        # Remote control poll (reboot / force update). Internally rate-limited.
         control_poll.tick(lcd)
-
         utime.sleep_ms(10)
-
 
 if __name__ == "__main__":
     main()
-
