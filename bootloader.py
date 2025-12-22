@@ -51,9 +51,7 @@ def gh_api_headers_raw():
         h["Authorization"] = "Bearer " + token
     return h
 
-def updating_progress(lcd, i, total, phase="Updating"):
-    msg = "{} {}/{}".format(phase, i, total)
-    draw_bottom_status(lcd, msg)
+
 
 # ---------- Display driver (1.8") ----------
 try:
@@ -73,7 +71,7 @@ LOGO_FILE   = "logo.bin"
 LOGO_W      = 160
 LOGO_H      = 128
 TEXT_HEIGHT = 8
-BAR_HEIGHT  = TEXT_HEIGHT + 1
+BAR_HEIGHT  = TEXT_HEIGHT + 2
 # Positioning the white status bar at the bottom of 128px height
 Y_POS       = 128 - BAR_HEIGHT + 1
 STATUS_X    = 5
@@ -92,18 +90,19 @@ def draw_bottom_status(lcd, status_msg, show_id=None):
         return
 
     # Auto behavior:
-    # Show ID only for "Connecting" and "Loading" (including "Connecting..." etc.)
+    # - Show ID only for Connecting / Loading
+    # - Also show ID on ERR codes
     if show_id is None:
-        show_id = status_msg.startswith("Connecting") or status_msg.startswith("Loading")
+        show_id = (
+            status_msg.startswith("Connecting")
+            or status_msg.startswith("Loading")
+            or status_msg.startswith("ERR:")
+        )
 
-    # Draw the white background bar
     lcd.fill_rect(0, Y_POS - 1, lcd.width, BAR_HEIGHT, WHITE)
-
-    # Draw Left Status
     lcd.text(status_msg, STATUS_X, Y_POS, BLACK)
 
     if show_id:
-        # Right-side ID
         device_id = "N/A"
         try:
             with open(DEVICE_ID_FILE, "r") as f:
@@ -116,6 +115,7 @@ def draw_bottom_status(lcd, status_msg, show_id=None):
         lcd.text(id_text, id_x, Y_POS, BLACK)
 
     lcd.show()
+
 
 
 
@@ -137,8 +137,10 @@ def draw_boot_logo(lcd):
         print("Logo error:", repr(e))
         lcd.fill(BLACK)
 
-    # Only one screen refresh: the bottom status draws + calls lcd.show()
+    # Do not call lcd.show() here.
+    # draw_bottom_status() will draw the bar and call lcd.show() once.
     draw_bottom_status(lcd, "Connecting")
+
 
 def init_lcd():
     if LCD_Driver is None:
@@ -147,7 +149,9 @@ def init_lcd():
         lcd = LCD_Driver()
         # Compatibility shim for .show() vs .show_up()
         if not hasattr(lcd, "show") and hasattr(lcd, "show_up"):
-            lcd.show = lcd.show_up
+            def _show():
+                lcd.show_up()
+            lcd.show = _show
         
         lcd.fill(BLACK)
         lcd.show()
@@ -156,78 +160,89 @@ def init_lcd():
         print("LCD init failed:", e)
         return None
 
-def draw_boot_logo(lcd):
-    if lcd is None:
-        return
-
-    expected = LOGO_W * LOGO_H * 2  # 160*128*2 = 40960
-
-    try:
-        st = os.stat(LOGO_FILE)
-        if st[6] != expected:
-            print("Logo size mismatch. Expected", expected, "got", st[6])
-            lcd.fill(BLACK)
-        else:
-            with open(LOGO_FILE, "rb") as f:
-                f.readinto(lcd.buffer)
-    except Exception as e:
-        print("Logo error:", repr(e))
-        lcd.fill(BLACK)
-
-    # IMPORTANT: do not call lcd.show() here
-    # draw_bottom_status() will call lcd.show() once after it draws the bar
-    draw_bottom_status(lcd, "Connecting")
-
-
-def draw_boot_logo(lcd):
-    if lcd is None: return
-    # 1.8" expectation: 160 * 128 * 2 bytes = 40,960 bytes
-    expected = LOGO_W * LOGO_H * 2
-    
-    try:
-        st = os.stat(LOGO_FILE)
-        if st[6] != expected:
-            print("Logo size mismatch. Expected", expected)
-            lcd.fill(BLACK)
-        else:
-            with open(LOGO_FILE, "rb") as f:
-                f.readinto(lcd.buffer)
-        lcd.show()
-    except Exception as e:
-        print("Logo error:", e)
-        lcd.fill(BLACK)
-        lcd.show()
-
-    draw_bottom_status(lcd, "Connecting")
 
 def status_error(lcd, code):
     msg = "ERR:{:03d}".format(code)
     draw_bottom_status(lcd, msg)
     time.sleep(2)
 
-# ---------- Wifi & Updates ----------
-
+## ---------- Wifi & Updates ----------
 def load_config_wifi():
     try:
         import config
-        return getattr(config, "WIFI_SSID", None), getattr(config, "WIFI_PASSWORD", None)
-    except ImportError:
+        ssid = getattr(config, "WIFI_SSID", None)
+        pwd  = getattr(config, "WIFI_PASSWORD", None)
+
+        # Normalize empty strings to None
+        if ssid is not None:
+            ssid = ssid.strip()
+            if ssid == "":
+                ssid = None
+        if pwd is not None:
+            pwd = str(pwd)
+
+        return ssid, pwd
+    except Exception:
         return None, None
 
-def connect_wifi(lcd, ssid, pwd, timeout_sec=10):
-    if not ssid: return False
-    draw_bottom_status(lcd, "Connecting")
-    
-    sta = network.WLAN(network.STA_IF)
-    sta.active(True)
-    sta.connect(ssid, pwd)
+def connect_wifi(lcd, ssid, pwd, timeout_sec=20, retries=2):
+    if not ssid:
+        return False
 
-    t0 = time.ticks_ms()
-    while not sta.isconnected():
-        if time.ticks_diff(time.ticks_ms(), t0) > timeout_sec * 1000:
-            return False
-        time.sleep_ms(100)
-    return True
+    draw_bottom_status(lcd, "Connecting")
+
+    # Make sure AP mode is off
+    try:
+        ap = network.WLAN(network.AP_IF)
+        ap.active(False)
+    except:
+        pass
+
+    sta = network.WLAN(network.STA_IF)
+
+    for attempt in range(1, retries + 1):
+        # Hard reset STA to avoid "first boot after update" flakiness
+        try:
+            sta.disconnect()
+        except:
+            pass
+        try:
+            sta.active(False)
+        except:
+            pass
+
+        time.sleep_ms(400)
+
+        sta.active(True)
+        time.sleep_ms(400)
+
+        try:
+            sta.connect(ssid, pwd)
+        except:
+            pass
+
+        t0 = time.ticks_ms()
+        while True:
+            if sta.isconnected():
+                return True
+
+            if time.ticks_diff(time.ticks_ms(), t0) > timeout_sec * 1000:
+                break
+
+            time.sleep_ms(150)
+
+        # If attempt failed, pause briefly before retrying
+        time.sleep_ms(800)
+
+    # All attempts failed
+    try:
+        sta.active(False)
+    except:
+        pass
+    return False
+
+
+
 
 import socket
 
@@ -241,6 +256,107 @@ def wait_for_internet_ready(max_s=5):
         except Exception as e:
             time.sleep_ms(250)
     return False
+
+import uhashlib
+
+def read_device_id():
+    try:
+        with open(DEVICE_ID_FILE, "r") as f:
+            return f.read().strip()
+    except:
+        return ""
+
+def _sha1_hex(s):
+    try:
+        h = uhashlib.sha1(s.encode("utf-8"))
+        return ubinascii.hexlify(h.digest()).decode()
+    except:
+        return ""  # if hashing fails, replay protection is disabled
+
+
+def fetch_control_json(lcd=None):
+    url = gh_contents_url(CONTROL_PATH)
+    print("BOOTLOADER: fetching (API)", CONTROL_PATH)
+
+    r = None
+    try:
+        r = requests.get(url, headers=gh_api_headers_raw())
+        print("BOOTLOADER: control.json HTTP:", r.status_code)
+        if r.status_code != 200:
+            return None
+        return r.text
+    except Exception as e:
+        print("BOOTLOADER: fetch_control_json error:", repr(e))
+        return None
+    finally:
+        try:
+            if r:
+                r.close()
+        except:
+            pass
+
+
+
+def apply_control_if_needed(lcd=None):
+    """
+    Returns: force_update (bool)
+    May reboot the device (and not return) if reboot is requested.
+    Triggers only once per *changed* control.json (hash-based).
+    """
+    ctrl_text = fetch_control_json(lcd)
+    if not ctrl_text:
+        return False
+
+    ctrl_hash = _sha1_hex(ctrl_text)
+
+    last_hash = ""
+    try:
+        with open(CONTROL_HASH_FILE, "r") as f:
+            last_hash = f.read().strip()
+    except:
+        pass
+
+    # If unchanged since last time, do nothing (prevents reboot loops)
+    if ctrl_hash and (last_hash == ctrl_hash):
+        return False
+
+    # Parse JSON
+    try:
+        ctrl = json.loads(ctrl_text)
+    except Exception as e:
+        print("BOOTLOADER: control.json parse error:", repr(e))
+        return False
+
+    dev_id = read_device_id()
+    reboot_ids = ctrl.get("reboot_ids", []) or []
+    force_ids  = ctrl.get("force_update_ids", []) or []
+
+    want_reboot = (dev_id in reboot_ids)
+    want_force  = (dev_id in force_ids)
+
+    # Record hash BEFORE taking action so it only happens once per control.json content
+    if ctrl_hash:
+        try:
+            with open(CONTROL_HASH_FILE, "w") as f:
+                f.write(ctrl_hash)
+            try:
+                os.sync()
+            except:
+                pass
+        except Exception as e:
+            print("BOOTLOADER: failed to write control hash:", repr(e))
+
+    if want_reboot:
+        print("BOOTLOADER: CONTROL reboot requested for ID", dev_id)
+        try:
+            # Hide ID during reboot message (your draw_bottom_status supports show_id override)
+            draw_bottom_status(lcd, "Rebooting", show_id=False)
+        except:
+            pass
+        time.sleep(1)
+        machine.reset()
+
+    return True if want_force else False
 
 
 def gh_contents_url(path):
@@ -347,14 +463,14 @@ def _safe_swap(target):
         pass
  
 
-def perform_update(vers_data, lcd):
+def perform_update(vers_data, lcd, force=False):
     SKIP = (
-    "bootloader.py",
-    "github_token.py",
-    "config.py",
-    "local_version.txt",
-    "device_id.txt",
-    "Pico_LCD_1_8.py",
+        "bootloader.py",
+        "github_token.py",
+        "config.py",
+        "local_version.txt",
+        "device_id.txt",
+        "Pico_LCD_1_8.py",
     )
 
     # 0) Version compare
@@ -366,9 +482,10 @@ def perform_update(vers_data, lcd):
         pass
 
     remote_v = (vers_data.get("version") or "0.0.0").strip()
-    print("BOOTLOADER: update needed", local_v, "->", remote_v)
+    print("BOOTLOADER: update needed", local_v, "->", remote_v, "(force={})".format(force))
 
-    if local_v == remote_v:
+    # Only skip when versions match AND we're not forcing
+    if (not force) and (local_v == remote_v):
         print("BOOTLOADER: No update needed.")
         return True
 
@@ -468,8 +585,9 @@ def perform_update(vers_data, lcd):
         pass
 
     gc.collect()
-    time.sleep(2)
+    time.sleep(4)
     machine.reset()
+
 
 
 
@@ -504,7 +622,7 @@ def run_app_main(lcd=None):
     print("BOOTLOADER: handoff -> app_main")
 
     try:
-        draw_bottom_status(lcd, "Loading")
+        draw_bottom_status(lcd, "Loading...")
     except:
         pass
 
@@ -549,112 +667,40 @@ def apply_staged_bootloader_if_present():
 
 def main():
     print("BOOTLOADER: main() start")
+    apply_staged_bootloader_if_present()
 
-    # 0) Apply staged bootloader update once
-    try:
-        apply_staged_bootloader_if_present()
-    except Exception as e:
-        print("BOOTLOADER: staged update apply failed:", repr(e))
-
-    # 1) LCD init
-    lcd = None
-    try:
-        lcd = init_lcd()
-    except Exception as e:
-        print("BOOTLOADER: init_lcd failed:", repr(e))
-
+    lcd = init_lcd()
     print("BOOTLOADER: lcd is", "OK" if lcd else "NONE")
+    if lcd:
+        draw_boot_logo(lcd)
 
-    # 2) Draw logo + show Connecting
-    try:
-        if lcd:
-            draw_boot_logo(lcd)  # should end by calling draw_bottom_status(...,"Connecting")
-    except Exception as e:
-        print("BOOTLOADER: draw_boot_logo failed:", repr(e))
-        try:
-            sys.print_exception(e)
-        except:
-            pass
-        try:
-            draw_bottom_status(lcd, "ERR:010")
-        except:
-            pass
-
-    # 3) Wi-Fi credentials
-    try:
-        ssid, pwd = load_config_wifi()
-    except Exception as e:
-        print("BOOTLOADER: load_config_wifi failed:", repr(e))
-        try:
-            sys.print_exception(e)
-        except:
-            pass
-        try:
-            draw_bottom_status(lcd, "ERR:020")
-        except:
-            pass
-        run_app_main(lcd)
-        return
-
+    ssid, pwd = load_config_wifi()
     if not ssid:
-        print("BOOTLOADER: no ssid")
         status_error(lcd, 20)
         run_app_main(lcd)
         return
 
-    # 4) Connect Wi-Fi
-    if not connect_wifi(lcd, ssid, pwd):
-        print("BOOTLOADER: wifi connect failed")
-        status_error(lcd, 0)
+    # Small settle delay right after boot (helps after machine.reset())
+    time.sleep_ms(800)
+
+    if not connect_wifi(lcd, ssid, pwd, timeout_sec=20, retries=2):
+        status_error(lcd, 0)  # ERR:000 = wifi connect failed
         run_app_main(lcd)
         return
 
-    # 5) Internet ready
-    if not wait_for_internet_ready(5):
-        print("BOOTLOADER: internet not ready")
-        status_error(lcd, 1)
-        run_app_main(lcd)
-        return
 
-    # 6) Update check
-    vers_data = None
-    try:
-        vers_data = fetch_versions_json(lcd)
-    except Exception as e:
-        print("BOOTLOADER: fetch_versions_json failed:", repr(e))
-        try:
-            sys.print_exception(e)
-        except:
-            pass
+    # NEW: control.json actions
+    force_update = apply_control_if_needed(lcd)
 
-    print("BOOTLOADER: vers_data is", "present" if vers_data else "NONE")
-
+    vers_data = fetch_versions_json(lcd)
     if vers_data:
-        try:
-            perform_update(vers_data, lcd)
-        except Exception as e:
-            print("BOOTLOADER: perform_update failed:", repr(e))
-            try:
-                sys.print_exception(e)
-            except:
-                pass
-            try:
-                draw_bottom_status(lcd, "ERR:030")
-            except:
-                pass
-
-    # 7) Hand off
-    print("BOOTLOADER: about to handoff")
-    try:
-        draw_bottom_status(lcd, "Loading...")
-    except:
-        pass
+        perform_update(vers_data, lcd, force=force_update)
 
     run_app_main(lcd)
 
 
 
-
 if __name__ == "__main__":
     main()
+
 
