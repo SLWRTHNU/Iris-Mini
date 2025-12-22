@@ -66,3 +66,4 @@ def tick(lcd=None):
     except Exception as e:
         # Never let control polling break the app
         print("APP: control poll failed:", repr(e))
+
