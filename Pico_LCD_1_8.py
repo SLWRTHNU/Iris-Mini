@@ -154,3 +154,4 @@ class LCD_1inch8(framebuf.FrameBuffer):
                         for sx in range(scale):
                             # Use the base pixel method to skip all framebuf background logic
                             self.pixel(x + (xx * scale) + sx, y + (yy * scale) + sy, color)
+
