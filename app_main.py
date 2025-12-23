@@ -40,6 +40,7 @@ BLACK  = 0x0000
 WHITE  = 0xFFFF
 RED    = 0xF800
 YELLOW = 0xF81F
+GREEN  = 0x001F
 
 # --- Global Heart State ---
 hb_state = True
@@ -190,12 +191,13 @@ def draw_screen(lcd, w_small, w_big, w_arrow, w_heart, w_delta_icon, last, hb_st
     bg_val = last["bg"]
     direction = last["direction"]
     bg_text = fmt_bg(bg_val)
+    #bg_text = "88.8" #manual number test
     arrow_text = last["arrow"]
     delta_text = fmt_delta(last["delta"])
     age_text = "{} {} ago".format(mins, "min" if mins == 1 else "mins")
     
     age_color = RED if mins >= STALE_MIN else WHITE
-    bg_color = WHITE
+    bg_color = GREEN
     if bg_val <= LOW_THRESHOLD:
         bg_color = RED
     elif bg_val >= HIGH_THRESHOLD:
@@ -249,8 +251,8 @@ def draw_screen(lcd, w_small, w_big, w_arrow, w_heart, w_delta_icon, last, hb_st
         val_num = delta_text[1:] # the numbers
         
         # --- ADJUST THESE CONTROLS ---
-        gap = 6          # Horizontal space between icon and number
-        v_offset = -3    # Fine-tune vertical center (e.g., -2 to move up, 2 to move down)
+        gap = 9          # Horizontal space between icon and number
+        v_offset = -5    # Fine-tune vertical center (e.g., -2 to move up, 2 to move down)
         # -----------------------------
 
         w_small.setcolor(BLACK, WHITE)
@@ -318,7 +320,7 @@ def main(lcd=None):
         hb_state = not hb_state
 
     blink_timer = Timer()
-    blink_timer.init(period=1500, mode=Timer.PERIODIC, callback=tick)
+    blink_timer.init(period=1000, mode=Timer.PERIODIC, callback=tick)
 
     while True:
         now = utime.ticks_ms()
@@ -339,3 +341,4 @@ def main(lcd=None):
 
 if __name__ == "__main__":
     main()
+
