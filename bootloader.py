@@ -114,7 +114,9 @@ def draw_bottom_status(lcd, status_msg, show_id=None):
         id_x = lcd.width - (len(id_text) * 8) - 5
         lcd.text(id_text, id_x, Y_POS, BLACK)
 
+    _lcd_backlight_on()
     lcd.show()
+
 
 
 
@@ -141,24 +143,75 @@ def draw_boot_logo(lcd):
     # draw_bottom_status() will draw the bar and call lcd.show() once.
     draw_bottom_status(lcd, "Connecting")
 
+CURRENT_BRIGHTNESS = 70  # Set your desired level here (0-100)
+
+def _lcd_backlight_on():
+    """Manually controls the backlight pin since the driver lacks bl_ctrl."""
+    try:
+        # Import the pin definition directly from the driver file
+        import Pico_LCD_1_8 as drv
+        from machine import Pin, PWM
+        
+        # Initialize PWM on the Backlight Pin (drv.BL is usually Pin 13)
+        bl_pin = Pin(drv.BL, Pin.OUT)
+        pwm = PWM(bl_pin)
+        pwm.freq(1000)
+        
+        # Convert 0-100% to 0-65535
+        duty = int(CURRENT_BRIGHTNESS * 65535 / 100)
+        pwm.duty_u16(duty)
+        print("Backlight set to {}%".format(CURRENT_BRIGHTNESS))
+    except Exception as e:
+        print("Manual Backlight control failed:", e)
 
 def init_lcd():
     if LCD_Driver is None:
         return None
     try:
+        _lcd_hard_reset()
+        
+        # Create the driver object
         lcd = LCD_Driver()
+        
+        # Removed lcd.bl_ctrl(5) because it causes the AttributeError
+        
         # Compatibility shim for .show() vs .show_up()
         if not hasattr(lcd, "show") and hasattr(lcd, "show_up"):
             def _show():
                 lcd.show_up()
             lcd.show = _show
+
+        # Use our manual PWM function instead of the driver's method
+        _lcd_backlight_on()
         
         lcd.fill(BLACK)
         lcd.show()
         return lcd
     except Exception as e:
-        print("LCD init failed:", e)
+        print("LCD init failed:", repr(e))
         return None
+
+def _lcd_hard_reset():
+    # Hardware reset of LCD (prevents occasional hang after machine.reset())
+    try:
+        import Pico_LCD_1_8 as drv
+        from machine import Pin
+
+        # Backlight on before/after reset (helps visibility)
+        try:
+            Pin(drv.BL, Pin.OUT).value(1)
+        except:
+            pass
+
+        rst = Pin(drv.RST, Pin.OUT)
+        rst.value(0)
+        time.sleep_ms(50)
+        rst.value(1)
+        time.sleep_ms(120)
+    except:
+        pass
+
+
 
 
 def status_error(lcd, code):
@@ -247,15 +300,6 @@ def connect_wifi(lcd, ssid, pwd, timeout_sec=20, retries=2):
 import socket
 
 
-def wait_for_internet_ready(max_s=5):
-    t0 = time.ticks_ms()
-    while time.ticks_diff(time.ticks_ms(), t0) < max_s * 1000:
-        try:
-            socket.getaddrinfo("api.github.com", 443)
-            return True
-        except Exception as e:
-            time.sleep_ms(250)
-    return False
 
 import uhashlib
 
@@ -462,7 +506,6 @@ def _safe_swap(target):
     except:
         pass
  
-
 def perform_update(vers_data, lcd, force=False):
     SKIP = (
         "bootloader.py",
@@ -499,7 +542,7 @@ def perform_update(vers_data, lcd, force=False):
     def _updating(i, total):
         try:
             pct = int((i * 100) / total) if total else 100
-            draw_bottom_status(lcd, "Updating {}%".format(pct))
+            draw_bottom_status(lcd, "Updating {}%".format(pct), show_id=False)
         except:
             pass
 
@@ -533,12 +576,11 @@ def perform_update(vers_data, lcd, force=False):
         if not ok:
             print("BOOTLOADER: Download failed:", path)
             return False
-
         gc.collect()
 
     # Lock status at 100% during swap (no second progress sweep)
     try:
-        draw_bottom_status(lcd, "Updating 100%")
+        draw_bottom_status(lcd, "Updating 100%", show_id=False)
     except:
         pass
 
@@ -579,13 +621,27 @@ def perform_update(vers_data, lcd, force=False):
 
     print("BOOTLOADER: Updated to", remote_v)
 
+    #    # Show reboot message (no ID)
     try:
-        draw_bottom_status(lcd, "Rebooting")
+        draw_bottom_status(lcd, "Rebooting", show_id=False)
     except:
         pass
 
-    gc.collect()
-    time.sleep(4)
+    # Cleanly shut down Wi-Fi before reset (reduces post-update weirdness)
+    try:
+        sta = network.WLAN(network.STA_IF)
+        try:
+            sta.disconnect()
+        except:
+            pass
+        try:
+            sta.active(False)
+        except:
+            pass
+    except:
+        pass
+
+    time.sleep_ms(300)
     machine.reset()
 
 
@@ -622,7 +678,7 @@ def run_app_main(lcd=None):
     print("BOOTLOADER: handoff -> app_main")
 
     try:
-        draw_bottom_status(lcd, "Loading...")
+        draw_bottom_status(lcd, "Loading", show_id=True)
     except:
         pass
 
@@ -638,12 +694,14 @@ def run_app_main(lcd=None):
             sys.print_exception(e)
         except:
             pass
+
         try:
-            draw_bottom_status(lcd, "ERR:050")
+            draw_bottom_status(lcd, "ERR:050", show_id=True)
         except:
             pass
-        time.sleep(2)
 
+        time.sleep(2)
+        machine.reset()
 
 
 
