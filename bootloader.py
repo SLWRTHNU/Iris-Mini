@@ -95,7 +95,7 @@ def draw_bottom_status(lcd, status_msg, show_id=None):
     if show_id is None:
         show_id = (
             status_msg.startswith("Connecting")
-            or status_msg.startswith("Loading")
+            or status_msg.startswith("Loading...")
             or status_msg.startswith("ERR:")
         )
 
