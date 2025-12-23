@@ -251,8 +251,8 @@ def draw_screen(lcd, w_small, w_big, w_arrow, w_heart, w_delta_icon, last, hb_st
         val_num = delta_text[1:] # the numbers
         
         # --- ADJUST THESE CONTROLS ---
-        gap = 9          # Horizontal space between icon and number
-        v_offset = -5    # Fine-tune vertical center (e.g., -2 to move up, 2 to move down)
+        gap = 7          # Horizontal space between icon and number
+        v_offset = -4    # Fine-tune vertical center (e.g., -2 to move up, 2 to move down)
         # -----------------------------
 
         w_small.setcolor(BLACK, WHITE)
@@ -341,4 +341,5 @@ def main(lcd=None):
 
 if __name__ == "__main__":
     main()
+
 
