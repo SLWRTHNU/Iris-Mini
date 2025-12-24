@@ -143,7 +143,7 @@ def draw_boot_logo(lcd):
     # draw_bottom_status() will draw the bar and call lcd.show() once.
     draw_bottom_status(lcd, "Connecting")
 
-CURRENT_BRIGHTNESS = 70  # Set your desired level here (0-100)
+CURRENT_BRIGHTNESS = 20  # Set your desired level here (0-100)
 
 def _lcd_backlight_on():
     """Manually controls the backlight pin since the driver lacks bl_ctrl."""
@@ -678,7 +678,7 @@ def run_app_main(lcd=None):
     print("BOOTLOADER: handoff -> app_main")
 
     try:
-        draw_bottom_status(lcd, "Loading", show_id=True)
+        draw_bottom_status(lcd, "Loading...", show_id=True)
     except:
         pass
 
