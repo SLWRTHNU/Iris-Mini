@@ -106,15 +106,15 @@ def mgdl_to_units(val_mgdl: float) -> float:
 
 def direction_to_arrow(direction: str) -> str:
     return {
-        "Flat": "A",
-        "SingleUp": "C",
-        "DoubleUp": "CC",
-        "TripleUp": "CCC",
-        "SingleDown": "D",
-        "DoubleDown": "DD",
-        "TripleDown": "DDD",
-        "FortyFiveUp": "G",
-        "FortyFiveDown": "H",
+        "Flat": "c",
+        "SingleUp": "b",
+        "DoubleUp": "bb",
+        "TripleUp": "bbb",
+        "SingleDown": "d",
+        "DoubleDown": "dd",
+        "TripleDown": "d",
+        "FortyFiveUp": "h",
+        "FortyFiveDown": "i",
         "NOT COMPUTABLE": "--",
         "NONE": "--",
     }.get(direction or "NONE", "")
