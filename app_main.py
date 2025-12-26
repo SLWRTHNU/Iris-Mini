@@ -30,6 +30,7 @@ except ImportError:
 # ---------- Fonts / Writer ----------
 from writer import CWriter
 import small_font as font_small
+import age_small_font as age_font_small
 import large_font as font_big
 import arrows_font as font_arrows
 import heart as font_heart
@@ -106,18 +107,17 @@ def mgdl_to_units(val_mgdl: float) -> float:
 
 def direction_to_arrow(direction: str) -> str:
     return {
-        "Flat": "c",
-        "SingleUp": "b",
-        "DoubleUp": "bb",
-        "TripleUp": "bbb",
-        "SingleDown": "d",
-        "DoubleDown": "dd",
-        "TripleDown": "d",
-        "FortyFiveUp": "h",
-        "FortyFiveDown": "i",
+        "Flat": "5",
+        "SingleUp": "4",
+        "DoubleUp": "44",
+        "SingleDown": "6",
+        "DoubleDown": "66",
+        "FortyFiveUp": ":",
+        "FortyFiveDown": ";",
         "NOT COMPUTABLE": "--",
         "NONE": "--",
     }.get(direction or "NONE", "")
+
 
 def parse_entries(data):
     if not data or not isinstance(data, list) or len(data) < 1:
@@ -163,7 +163,7 @@ def now_unix_s():
         return t + UNIX_2000_OFFSET
     return t
 
-def draw_screen(lcd, w_small, w_big, w_arrow, w_heart, w_delta_icon, last, hb_state): 
+def draw_screen(lcd, w_small, w_age_small, w_big, w_arrow, w_heart, w_delta_icon, last, hb_state): 
     # --- LOADING STATE ---
     if not last:
         BAR_HEIGHT = 11
@@ -173,14 +173,14 @@ def draw_screen(lcd, w_small, w_big, w_arrow, w_heart, w_delta_icon, last, hb_st
         id_text = "ID:{}".format(device_id)
         lcd.fill_rect(0, Y_POS, lcd.width, BAR_HEIGHT, WHITE)
         lcd.text("Loading...", STATUS_X, Y_POS + 1, BLACK)
-        id_x = lcd.width - (len(id_text) * 8) - 5
+        id_x = lcd.width - (len(id_text) * 8) - 3
         lcd.text(id_text, id_x, Y_POS + 2, BLACK)
         lcd.show()
         return         
 
     # --- DATA STATE ---
     lcd.fill(BLACK)
-    W, H = lcd.width, lcd.height # 160, 128
+    W, H = lcd.width, lcd.height
     M = 4 
     
     raw_s = last["time_ms"] // 1000
@@ -195,6 +195,7 @@ def draw_screen(lcd, w_small, w_big, w_arrow, w_heart, w_delta_icon, last, hb_st
     arrow_text = last["arrow"]
     delta_text = fmt_delta(last["delta"])
     age_text = "{} {} ago".format(mins, "min" if mins == 1 else "mins")
+    #age_text = "88 mins ago"
     
     age_color = RED if mins >= STALE_MIN else WHITE
     bg_color = GREEN
@@ -210,28 +211,47 @@ def draw_screen(lcd, w_small, w_big, w_arrow, w_heart, w_delta_icon, last, hb_st
         arrow_color = RED
 
     small_h = font_small.height()
+    age_small_h = age_font_small.height()
     big_h = font_big.height()
     arrow_h = font_arrows.height()
     heart_h = font_heart.height()
     bottom_h = max(small_h, arrow_h)
 
-    y_age = M
+    y_age = 6
     y_bg = (H - big_h) // 2
-    y_bottom_base = H - bottom_h - M
-    y_arrow = y_bottom_base + (bottom_h - arrow_h) // 2
+    y_bottom_base = H - bottom_h - 1
+    
+    # --- ARROW VERTICAL CONTROL ---
+    arrow_offset = -2  # <--- ADJUST THIS: Negative moves UP, Positive moves DOWN
+    y_arrow = (y_bottom_base + (bottom_h - arrow_h) // 2) + arrow_offset
+    # ------------------------------
+    
     y_delta = y_bottom_base + (bottom_h - small_h) // 2
 
+    # --- POSITIONAL CONTROLS ---
+    heart_right_margin = 4  # Pixels from the right edge of screen
+    heart_age_gap = 4        # Pixels between heart and age text
+    # ---------------------------
+
+    # 1. Calculate Heart Position (Fixed)
+    # Assuming "T" is about 8-12 pixels wide, we'll use heart_w to be precise
+    heart_w = w_heart.stringlen("T")
+    x_heart = W - heart_right_margin - heart_w
+
+    # 2. Calculate Age Position (Anchored to Heart)
+    age_w = w_age_small.stringlen(age_text)
+    x_age = x_heart - age_w - heart_age_gap
+
     # Draw Age
-    w_small.setcolor(BLACK, age_color)
-    age_w = w_small.stringlen(age_text)
-    x_age = (W - age_w) // 2
-    w_small.set_textpos(lcd, y_age, x_age)
-    w_small.printstring(age_text)
+    w_age_small.setcolor(BLACK, age_color)
+    w_age_small.set_textpos(lcd, y_age, x_age)
+    w_age_small.printstring(age_text)
 
     # Draw Heart
     if hb_state:
         w_heart.setcolor(BLACK, RED)
-        w_heart.set_textpos(lcd, y_age + (small_h - heart_h) // 2, x_age + age_w + 5)
+        # Vertical centering: y_age + (height difference)
+        w_heart.set_textpos(lcd, y_age + (age_small_h - heart_h) // 4, x_heart)
         w_heart.printstring("T")
 
     # Draw BG
@@ -242,25 +262,28 @@ def draw_screen(lcd, w_small, w_big, w_arrow, w_heart, w_delta_icon, last, hb_st
 
     # Draw Trend Arrow
     w_arrow.setcolor(BLACK, arrow_color)
-    w_arrow.set_textpos(lcd, y_arrow, M) 
+    w_arrow.set_textpos(lcd, y_arrow, 10) 
     w_arrow.printstring(arrow_text)
 
     # Draw Delta (Vertically Centered Icon + Adjustable Gap)
     if delta_text:
-        sign = delta_text[0]  # "+" or "-"
+        #sign = delta_text[0]  # "+" or "-"
+        sign = "+"
         val_num = delta_text[1:] # the numbers
         
         # --- ADJUST THESE CONTROLS ---
-        gap = 7          # Horizontal space between icon and number
-        v_offset = -4    # Fine-tune vertical center (e.g., -2 to move up, 2 to move down)
+        gap = 5          # Horizontal space between icon and number
+        v_offset = -5    # Fine-tune vertical center (e.g., -2 to move up, 2 to move down)
         # -----------------------------
 
         w_small.setcolor(BLACK, WHITE)
+        w_age_small.setcolor(BLACK, WHITE)
         w_delta_icon.setcolor(BLACK, WHITE)
         
         # 1. Calculate heights for vertical centering
         # We calculate the difference in height to offset the Y position
         h_small = font_small.height()
+        h_age_small = age_font_small.height()
         h_delta = font_delta.height()
         # This formula finds the Y that puts the middle of the icon 
         # at the middle of the small text
@@ -297,7 +320,9 @@ def main(lcd=None):
 
     # Initialize Writers
     w_small = CWriter(lcd, font_small, fgcolor=WHITE, bgcolor=BLACK, verbose=False)
+    w_age_small = CWriter(lcd, age_font_small, fgcolor=WHITE, bgcolor=BLACK, verbose=False)
     w_small.set_spacing(3)
+    w_age_small.set_spacing(3)
     w_big = CWriter(lcd, font_big, fgcolor=WHITE, bgcolor=BLACK, verbose=False)
     w_arrow = CWriter(lcd, font_arrows, fgcolor=WHITE, bgcolor=BLACK, verbose=False)
     w_heart = CWriter(lcd, font_heart, fgcolor=RED, bgcolor=BLACK, verbose=False)
@@ -305,7 +330,7 @@ def main(lcd=None):
     w_arrow.set_spacing(8)
 
     # Initial Loading Call
-    draw_screen(lcd, w_small, w_big, w_arrow, w_heart, w_delta_icon, None, hb_state)
+    draw_screen(lcd, w_small, w_age_small, w_big, w_arrow, w_heart, w_delta_icon, None, hb_state)
 
     connect_wifi(WIFI_SSID, WIFI_PASSWORD)
     ntp_sync()
@@ -327,7 +352,7 @@ def main(lcd=None):
 
         if hb_state != last_hb_state:
             last_hb_state = hb_state
-            draw_screen(lcd, w_small, w_big, w_arrow, w_heart, w_delta_icon, last, hb_state)
+            draw_screen(lcd, w_small, w_age_small, w_big, w_arrow, w_heart, w_delta_icon, last, hb_state)
 
         if utime.ticks_diff(now, fetch_next) >= 0:
             data = fetch_ns_entries()
@@ -341,5 +366,3 @@ def main(lcd=None):
 
 if __name__ == "__main__":
     main()
-
-
