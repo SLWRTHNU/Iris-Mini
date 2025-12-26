@@ -22,6 +22,8 @@ LOCAL_VERSION_FILE = "local_version.txt"
 DEVICE_ID_FILE     = "device_id.txt"
 CONTROL_HASH_FILE  = "last_control_hash.txt"
 
+CURRENT_BRIGHTNESS = 100  # Set your desired level here (0-100)
+
 def _get_token():
     try:
         import github_token
@@ -70,11 +72,11 @@ WHITE = 0xFFFF
 LOGO_FILE   = "logo.bin"
 LOGO_W      = 160
 LOGO_H      = 128
-TEXT_HEIGHT = 8
-BAR_HEIGHT  = TEXT_HEIGHT + 2
+TEXT_HEIGHT = 10
+BAR_HEIGHT  = TEXT_HEIGHT + 1
 # Positioning the white status bar at the bottom of 128px height
 Y_POS       = 128 - BAR_HEIGHT + 1
-STATUS_X    = 5
+STATUS_X    = 3
 
 
 
@@ -95,7 +97,7 @@ def draw_bottom_status(lcd, status_msg, show_id=None):
     if show_id is None:
         show_id = (
             status_msg.startswith("Connecting")
-            or status_msg.startswith("Loading...")
+            or status_msg.startswith("Loading")
             or status_msg.startswith("ERR:")
         )
 
@@ -111,7 +113,7 @@ def draw_bottom_status(lcd, status_msg, show_id=None):
             pass
 
         id_text = "ID:{}".format(device_id)
-        id_x = lcd.width - (len(id_text) * 8) - 5
+        id_x = lcd.width - (len(id_text) * 8) - 3
         lcd.text(id_text, id_x, Y_POS, BLACK)
 
     _lcd_backlight_on()
@@ -143,7 +145,6 @@ def draw_boot_logo(lcd):
     # draw_bottom_status() will draw the bar and call lcd.show() once.
     draw_bottom_status(lcd, "Connecting")
 
-CURRENT_BRIGHTNESS = 20  # Set your desired level here (0-100)
 
 def _lcd_backlight_on():
     """Manually controls the backlight pin since the driver lacks bl_ctrl."""
@@ -678,7 +679,7 @@ def run_app_main(lcd=None):
     print("BOOTLOADER: handoff -> app_main")
 
     try:
-        draw_bottom_status(lcd, "Loading...", show_id=True)
+        draw_bottom_status(lcd, "Loading", show_id=True)
     except:
         pass
 
@@ -760,5 +761,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
