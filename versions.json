@@ -5,6 +5,7 @@
     { "path": "app_main.py", "target": "app_main.py" },
     { "path": "writer.py", "target": "writer.py" },
     { "path": "small_font.py", "target": "small_font.py" },
+    { "path": "age_small_font.py", "target": "age_small_font.py" },
     { "path": "large_font.py", "target": "large_font.py" },
     { "path": "arrows_font.py", "target": "arrows_font.py" },
     { "path": "logo.bin", "target": "logo.bin" },
