@@ -1,3 +1,8 @@
+def log(msg):
+    # Change 'time' to 'utime' here
+    timestamp = utime.ticks_ms()
+    print("[{:>8}ms] {}".format(timestamp, msg))
+    
 # app_main.py (Iris Classic 1.8")
 import utime
 import network
@@ -16,7 +21,28 @@ except Exception:
     pass
 
 # ---------- Config ----------
-from config import * # noqa
+import config
+
+# Helper to get config values with fallbacks
+def cfg(name, default):
+    return getattr(config, name, default)
+
+# Assign portal values to variables used in the app
+WIFI_SSID = cfg('WIFI_SSID', '')
+WIFI_PASSWORD = cfg('WIFI_PASSWORD', '')
+NS_URL = cfg('NS_URL', '')
+NS_TOKEN = cfg('API_SECRET', '')     # Matches 'token' in portal
+API_ENDPOINT = cfg('API_ENDPOINT', '/api/v1/entries/sgv.json?count=2')
+DISPLAY_UNITS = cfg('UNITS', 'mmol')
+
+# Ensure these are numbers for comparison logic
+LOW_THRESHOLD = float(cfg('THRESHOLD_LOW', 4.0))
+HIGH_THRESHOLD = float(cfg('THRESHOLD_HIGH', 11.0))
+STALE_MIN = int(cfg('STALE_MINS', 7))
+
+# The new Alert Toggles
+ALERT_DOUBLE_UP = cfg('ALERT_DOUBLE_UP', True)
+ALERT_DOUBLE_DOWN = cfg('ALERT_DOUBLE_DOWN', True)
 
 # ---------- Display driver ----------
 try:
@@ -39,7 +65,7 @@ import delta as font_delta # Imported as font_delta to avoid naming conflicts
 # ---------- Colors ----------
 BLACK  = 0x0000
 WHITE  = 0xFFFF
-RED    = 0xF800
+RED    = 0xFC00
 YELLOW = 0xF81F
 GREEN  = 0x001F
 
@@ -107,13 +133,13 @@ def mgdl_to_units(val_mgdl: float) -> float:
 
 def direction_to_arrow(direction: str) -> str:
     return {
-        "Flat": "5",
-        "SingleUp": "4",
-        "DoubleUp": "44",
-        "SingleDown": "6",
-        "DoubleDown": "66",
-        "FortyFiveUp": ":",
-        "FortyFiveDown": ";",
+        "Flat": "J",
+        "SingleUp": "O",
+        "DoubleUp": "OO",
+        "SingleDown": "P",
+        "DoubleDown": "PP",
+        "FortyFiveUp": "L",
+        "FortyFiveDown": "N",
         "NOT COMPUTABLE": "--",
         "NONE": "--",
     }.get(direction or "NONE", "")
@@ -163,24 +189,52 @@ def now_unix_s():
         return t + UNIX_2000_OFFSET
     return t
 
-def draw_screen(lcd, w_small, w_age_small, w_big, w_arrow, w_heart, w_delta_icon, last, hb_state): 
+def draw_screen(lcd, w_small, w_age_small, w_big, w_arrow, w_heart, w_delta_icon, last, hb_state, heart_only=False): 
+    # --- POSITIONAL CONSTANTS ---
+    # These must be defined first so both full and partial draws use the same math
+    W, H = lcd.width, lcd.height
+    y_age = 6
+    heart_right_margin = 4
+    age_small_h = age_font_small.height()
+    heart_h = font_heart.height()
+    heart_w = w_heart.stringlen("T")
+    
+    # Calculate Heart Position
+    x_heart = W - heart_right_margin - heart_w
+    y_heart = y_age + (age_small_h - heart_h) // 4
+
+    # --- PARTIAL DRAW (Heart Blink) ---
+    if heart_only:
+        # Erase just the heart area
+        lcd.fill_rect(x_heart, y_heart, heart_w, heart_h, BLACK)
+        if hb_state:
+            w_heart.setcolor(BLACK, RED)
+            w_heart.set_textpos(lcd, y_heart, x_heart)
+            w_heart.printstring("T")
+        
+        # Performance: Use show_rect if your driver supports it, else standard show
+        if hasattr(lcd, "show_rect"):
+            lcd.show_rect(x_heart, y_heart, heart_w, heart_h)
+        else:
+            lcd.show()
+        return
+
     # --- LOADING STATE ---
     if not last:
         BAR_HEIGHT = 11
         Y_POS = 128 - BAR_HEIGHT + 1
-        STATUS_X = 5
+        STATUS_X = 3
         device_id = get_device_id()
         id_text = "ID:{}".format(device_id)
         lcd.fill_rect(0, Y_POS, lcd.width, BAR_HEIGHT, WHITE)
-        lcd.text("Loading...", STATUS_X, Y_POS + 1, BLACK)
+        lcd.text("Loading", STATUS_X, Y_POS, BLACK)
         id_x = lcd.width - (len(id_text) * 8) - 3
-        lcd.text(id_text, id_x, Y_POS + 2, BLACK)
+        lcd.text(id_text, id_x, Y_POS, BLACK)
         lcd.show()
         return         
 
-    # --- DATA STATE ---
+    # --- FULL DATA STATE DRAW ---
     lcd.fill(BLACK)
-    W, H = lcd.width, lcd.height
     M = 4 
     
     raw_s = last["time_ms"] // 1000
@@ -189,14 +243,19 @@ def draw_screen(lcd, w_small, w_age_small, w_big, w_arrow, w_heart, w_delta_icon
     mins = int((age_s + 30) // 60)
 
     bg_val = last["bg"]
+    #bg_val = "88.8"
     direction = last["direction"]
+    #direction = last["direction"]
     bg_text = fmt_bg(bg_val)
-    #bg_text = "88.8" #manual number test
+    #bg_text = "88.8"
     arrow_text = last["arrow"]
+    #arrow_text = "44"
     delta_text = fmt_delta(last["delta"])
+    #delta_text = "8.8
     age_text = "{} {} ago".format(mins, "min" if mins == 1 else "mins")
     #age_text = "88 mins ago"
     
+    # Color Logic
     age_color = RED if mins >= STALE_MIN else WHITE
     bg_color = GREEN
     if bg_val <= LOW_THRESHOLD:
@@ -211,47 +270,30 @@ def draw_screen(lcd, w_small, w_age_small, w_big, w_arrow, w_heart, w_delta_icon
         arrow_color = RED
 
     small_h = font_small.height()
-    age_small_h = age_font_small.height()
     big_h = font_big.height()
     arrow_h = font_arrows.height()
-    heart_h = font_heart.height()
     bottom_h = max(small_h, arrow_h)
 
-    y_age = 6
     y_bg = (H - big_h) // 2
     y_bottom_base = H - bottom_h - 1
     
-    # --- ARROW VERTICAL CONTROL ---
-    arrow_offset = -2  # <--- ADJUST THIS: Negative moves UP, Positive moves DOWN
+    # Arrow Position
+    arrow_offset = -2 
     y_arrow = (y_bottom_base + (bottom_h - arrow_h) // 2) + arrow_offset
-    # ------------------------------
-    
     y_delta = y_bottom_base + (bottom_h - small_h) // 2
 
-    # --- POSITIONAL CONTROLS ---
-    heart_right_margin = 4  # Pixels from the right edge of screen
-    heart_age_gap = 4        # Pixels between heart and age text
-    # ---------------------------
-
-    # 1. Calculate Heart Position (Fixed)
-    # Assuming "T" is about 8-12 pixels wide, we'll use heart_w to be precise
-    heart_w = w_heart.stringlen("T")
-    x_heart = W - heart_right_margin - heart_w
-
-    # 2. Calculate Age Position (Anchored to Heart)
+    # Draw Age
+    heart_age_gap = 6
     age_w = w_age_small.stringlen(age_text)
     x_age = x_heart - age_w - heart_age_gap
-
-    # Draw Age
     w_age_small.setcolor(BLACK, age_color)
     w_age_small.set_textpos(lcd, y_age, x_age)
     w_age_small.printstring(age_text)
 
-    # Draw Heart
+    # Draw Heart (Full Draw Phase)
     if hb_state:
         w_heart.setcolor(BLACK, RED)
-        # Vertical centering: y_age + (height difference)
-        w_heart.set_textpos(lcd, y_age + (age_small_h - heart_h) // 4, x_heart)
+        w_heart.set_textpos(lcd, y_heart, x_heart)
         w_heart.printstring("T")
 
     # Draw BG
@@ -265,42 +307,30 @@ def draw_screen(lcd, w_small, w_age_small, w_big, w_arrow, w_heart, w_delta_icon
     w_arrow.set_textpos(lcd, y_arrow, 10) 
     w_arrow.printstring(arrow_text)
 
-    # Draw Delta (Vertically Centered Icon + Adjustable Gap)
+    # Draw Delta (Fixed Sign Logic)
     if delta_text:
-        #sign = delta_text[0]  # "+" or "-"
-        sign = "+"
-        val_num = delta_text[1:] # the numbers
+        sign = delta_text[0]  # Correctly pulls + or -
+        val_num = delta_text[1:] 
         
-        # --- ADJUST THESE CONTROLS ---
-        gap = 5          # Horizontal space between icon and number
-        v_offset = -5    # Fine-tune vertical center (e.g., -2 to move up, 2 to move down)
-        # -----------------------------
-
+        gap = 5          
+        v_offset = -5
+        
         w_small.setcolor(BLACK, WHITE)
-        w_age_small.setcolor(BLACK, WHITE)
         w_delta_icon.setcolor(BLACK, WHITE)
         
-        # 1. Calculate heights for vertical centering
-        # We calculate the difference in height to offset the Y position
         h_small = font_small.height()
-        h_age_small = age_font_small.height()
         h_delta = font_delta.height()
-        # This formula finds the Y that puts the middle of the icon 
-        # at the middle of the small text
         y_delta_centered = y_delta + (h_small - h_delta) // 2 + v_offset
 
-        # 2. Calculate Horizontal positions (Right Aligned)
         num_w = w_small.stringlen(val_num)
         sign_w = w_delta_icon.stringlen(sign)
         
         x_num = W - M - num_w
         x_sign = x_num - sign_w - gap
         
-        # 3. Render Icon (using the calculated centered Y)
         w_delta_icon.set_textpos(lcd, y_delta_centered, x_sign)
         w_delta_icon.printstring(sign)
         
-        # 4. Render Number (using the original Y)
         w_small.set_textpos(lcd, y_delta, x_num)
         w_small.printstring(val_num)
 
@@ -309,6 +339,11 @@ def draw_screen(lcd, w_small, w_age_small, w_big, w_arrow, w_heart, w_delta_icon
 def main(lcd=None):
     global hb_state
     gc.collect()
+
+    # --- 1. INITIALIZE VARIABLES (The Fix) ---
+    last = None            # Current glucose data
+    last_hb_state = None   # Track heartbeat changes
+    # ------------------------------------------
 
     if lcd is None:
         lcd = LCD_Driver()
@@ -322,7 +357,7 @@ def main(lcd=None):
     w_small = CWriter(lcd, font_small, fgcolor=WHITE, bgcolor=BLACK, verbose=False)
     w_age_small = CWriter(lcd, age_font_small, fgcolor=WHITE, bgcolor=BLACK, verbose=False)
     w_small.set_spacing(3)
-    w_age_small.set_spacing(3)
+    w_age_small.set_spacing(2)
     w_big = CWriter(lcd, font_big, fgcolor=WHITE, bgcolor=BLACK, verbose=False)
     w_arrow = CWriter(lcd, font_arrows, fgcolor=WHITE, bgcolor=BLACK, verbose=False)
     w_heart = CWriter(lcd, font_heart, fgcolor=RED, bgcolor=BLACK, verbose=False)
@@ -335,34 +370,57 @@ def main(lcd=None):
     connect_wifi(WIFI_SSID, WIFI_PASSWORD)
     ntp_sync()
     
-    FETCH_MS = 15000
-    last = None
-    fetch_next = utime.ticks_ms()
-    last_hb_state = not hb_state
+    # Timing Intervals
+    GLUCOSE_INTERVAL = 5000  # 5 seconds
+    CONTROL_INTERVAL = 60000  # 60 seconds 
 
-    def tick(t):
+    next_glucose = utime.ticks_ms()
+    next_control = utime.ticks_ms() + 5000
+    
+    # Track the last state we actually drew to avoid over-refreshing
+    last_drawn_hb = hb_state 
+
+    # Define the timer callback
+    def toggle_heart(t):
         global hb_state
         hb_state = not hb_state
 
-    blink_timer = Timer()
-    blink_timer.init(period=1000, mode=Timer.PERIODIC, callback=tick)
+    # Initialize Timer 0 to blink every 500ms
+    heart_timer = Timer(-1)
+    heart_timer.init(period=1000, mode=Timer.PERIODIC, callback=toggle_heart)
 
     while True:
         now = utime.ticks_ms()
 
-        if hb_state != last_hb_state:
-            last_hb_state = hb_state
-            draw_screen(lcd, w_small, w_age_small, w_big, w_arrow, w_heart, w_delta_icon, last, hb_state)
-
-        if utime.ticks_diff(now, fetch_next) >= 0:
+        # 1. Heartbeat Logic (High Priority)
+        if hb_state != last_drawn_hb:
+            last_drawn_hb = hb_state
+            # Only blink if we aren't currently on the loading screen
+            if last is not None:
+                draw_screen(lcd, w_small, w_age_small, w_big, w_arrow, w_heart, w_delta_icon, last, hb_state, heart_only=True)
+                
+        # 2. Glucose Fetch
+        if utime.ticks_diff(now, next_glucose) >= 0:
+            log("Fetching Glucose...")
             data = fetch_ns_entries()
             parsed = parse_entries(data)
             if parsed:
                 last = parsed
-            fetch_next = utime.ticks_add(now, FETCH_MS)
+                # Force a redraw immediately when new data arrives
+                draw_screen(lcd, w_small, w_age_small, w_big, w_arrow, w_heart, w_delta_icon, last, hb_state)
+            
+            next_glucose = utime.ticks_add(now, GLUCOSE_INTERVAL)
+            gc.collect()
 
-        control_poll.tick(lcd)
-        utime.sleep_ms(10)
-
+        # 3. Control/Update Poll
+        if utime.ticks_diff(now, next_control) >= 0:
+            control_poll.tick(lcd)
+            next_control = utime.ticks_add(now, CONTROL_INTERVAL)
+        
+        utime.sleep_ms(50)
+        
+        
 if __name__ == "__main__":
     main()
+
+
