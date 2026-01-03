@@ -319,3 +319,4 @@ class CWriter(Writer):
         return self.fgcolor, self.bgcolor
 
 
+
