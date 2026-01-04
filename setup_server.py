@@ -102,23 +102,28 @@ CONFIG_SAVED_HTML = """HTTP/1.1 200 OK
 Content-Type: text/html
 
 <html>
+<head>
+    <meta charset="UTF-8">
+</head>
 <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; text-align:center; padding-top:100px; background-color:#f0f2f5; margin:0;">
     <div style="background:white; padding:40px; border-radius:16px; display:inline-block; box-shadow:0 10px 25px rgba(0,0,0,0.05); max-width: 320px; width: 90%;">
         
         <div style="width:60px; height:60px; background:#e8f5e9; color:#2e7d32; border-radius:50%; line-height:60px; font-size:30px; margin: 0 auto 20px auto;">
-            ✔
+            &#10004;
         </div>
 
-        <h1 style="color:#111827; margin:0 0 10px 0; font-size: 24px;">Settings Saved</h1>
+        <h1 style="color:#111827; margin:0 0 10px 0; font-size: 24px;">Success!</h1>
         
         <div style="height:2px; background:#e5e7eb; width:100%; margin: 20px 0;"></div>
         
-        <p style="color:#4b5563; font-size:16px; line-height:1.5; margin:0;">
-            Your Iris Mini is now rebooting. 
+        <p style="color:#4b5563; font-size:16px; line-height:1.5; margin:0 0 12px 0;">
+            Your Iris Mini is now syncing your data and connecting to your network.
         </p>
-        <p style="color:#9ca3af; font-size:14px; margin-top:10px;">
-            Please wait while it syncs your information.
+        
+        <p style="color:#1A936F; font-weight:600; font-size:15px; margin:0;">
+            You may now close this window.
         </p>
+
     </div>
 </body>
 </html>
@@ -208,3 +213,4 @@ def run():
         except Exception as e:
             log("Server Error: {}".format(e))
             if cl: cl.close()
+
