@@ -249,7 +249,9 @@ def _safe_swap(target):
  
 
 def perform_update(vers_data, lcd, force=False):
-    SKIP = ("bootloader.py", "github_token.py", "config.py", "local_version.txt", "Pico_LCD_1_8.py")
+    # We only skip user-specific credentials and the version tracker
+    SKIP = ("github_token.py", "config.py", "local_version.txt")
+    
     remote_v = (vers_data.get("version") or "0.0.0").strip()
     
     files = vers_data.get("files", [])
@@ -308,11 +310,22 @@ def run_app_main(lcd=None):
         machine.reset()
 
 def apply_staged_bootloader_if_present():
-    if "bootloader.py.next" in os.listdir():
+    # Check if a new version of the bootloader was downloaded
+    if "bootloader.py.new" in os.listdir():
         try:
-            os.rename("bootloader.py.next", "bootloader.py")
-            machine.reset()
-        except: pass
+            log("Applying new bootloader...")
+            # Delete the old backup if it exists
+            try: os.remove("bootloader.py.old")
+            except: pass
+            
+            # Rename current to old, and new to current
+            os.rename("bootloader.py", "bootloader.py.old")
+            os.rename("bootloader.py.new", "bootloader.py")
+            
+            log("Bootloader updated. Restarting...")
+            machine.reset() # Restart to run the new code
+        except Exception as e:
+            log("Bootloader swap failed: {}".format(e))
         
 def draw_bottom_status(lcd, status_msg, show_id=None):
     if lcd is None: return
@@ -357,12 +370,20 @@ def draw_boot_logo(lcd):
     draw_bottom_status(lcd, "Connecting")
 
 # ---------- Runner ----------
-
 def main():
-    # 1. Give the hardware a moment to stabilize after a reboot
+    # 1. Hardware Stability Delay
     time.sleep_ms(500) 
     
-    # 2. Light up the onboard LED so you know the code is actually running
+    # 2. Start the LCD and show the logo immediately
+    lcd = init_lcd()
+    if lcd:
+        draw_boot_logo(lcd)
+    
+    # 3. Handle Bootloader Updates FIRST
+    # If this finds a new file, it will reboot the Pico immediately
+    apply_staged_bootloader_if_present()
+    
+    # 4. Heartbeat LED
     try:
         led = machine.Pin("LED", machine.Pin.OUT)
         led.on()
@@ -371,14 +392,7 @@ def main():
 
     log("BOOTLOADER: Starting...")
     
-    # 3. Start the LCD
-    lcd = init_lcd()
-    if lcd:
-        draw_boot_logo(lcd)
-    
-    apply_staged_bootloader_if_present()
-    
-    # 2. Check for config.py
+    # 5. Check for WiFi config
     config_exists = False
     try:
         os.stat("config.py")
@@ -386,7 +400,7 @@ def main():
     except OSError:
         config_exists = False
 
-    # 3. Setup Mode (If no config)
+    # 6. Setup Mode (If no config)
     if not config_exists:
         log("Entering Setup Mode...")
         ap = network.WLAN(network.AP_IF)
@@ -396,7 +410,7 @@ def main():
         
         if lcd:
             YELLOW = 0xF81F
-            M, LH, IND = 8, 14, 12 # Define the missing margins
+            M, LH, IND = 8, 14, 12
             w = 160
             
             def _text_w_px(s): return len(s) * 8
@@ -411,14 +425,15 @@ def main():
             lcd.text("1) Connect to WiFi:", M, y, WHITE); y += LH
             lcd.text("   Iris Mini", M + IND, y, YELLOW); y += (LH + 15)
             lcd.text("2) Open this URL:", M, y, WHITE); y += LH
-            lcd.text("   http://{}".format(ip), M + IND, y, YELLOW)
+            # Put the http back for clarity
+            lcd.text("   {}".format(ip), M + IND, y, YELLOW)
             lcd.show()
 
         import setup_server
         setup_server.run()
         return
 
-    # 4. Normal Boot
+    # 7. Normal Boot
     ssid, pwd = load_config_wifi()
     if not ssid or not connect_wifi(lcd, ssid, pwd):
         log("WiFi Failed.")
@@ -434,7 +449,7 @@ def main():
             lcd.show()
         return
 
-    # 5. Check for Updates
+    # 8. Check for Updates
     log("Checking for updates...")
     vers_data = fetch_versions_json(lcd)
     
@@ -452,7 +467,7 @@ def main():
             perform_update(vers_data, lcd, force=True)
             return 
     
-    # 6. Success - Run App
+    # 9. Success - Run App
     run_app_main(lcd)
 
 if __name__ == "__main__":
