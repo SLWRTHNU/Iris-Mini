@@ -483,20 +483,35 @@ def main():
     vers_data = fetch_versions_json(lcd)
     
     if vers_data:
-        # Check for remote reboot command
+        # 1. Handle remote reboot command
         if vers_data.get("remote_command") == "reboot":
             log("Remote reboot command received.")
             machine.reset()
             
+        # 2. Check versions
+        remote_v = (vers_data.get("version") or "0.0.0").strip()
+        local_v = "0.0.0"
+        try:
+            with open(LOCAL_VERSION_FILE, "r") as f: local_v = f.read().strip()
+        except: pass
+
         force_update = vers_data.get("force_update", False)
-        # perform_update will handle the "Updating" and "Rebooting" status messages
-        if not perform_update(vers_data, lcd, force=force_update):
-            log("Update process failed.")
-            if lcd:
-                draw_bottom_status(lcd, "Update Error", show_id=False)
-            time.sleep(2)
-    
-    run_app_main(lcd)
+
+        # 3. ONLY hand off if NO update is needed
+        if local_v == remote_v and not force_update:
+            log("No update needed. Proceeding to App.")
+            run_app_main(lcd)
+        else:
+            log("Update required ({} -> {}). Starting...".format(local_v, remote_v))
+            if not perform_update(vers_data, lcd, force=force_update):
+                log("Update failed. Falling back to current app.")
+                run_app_main(lcd)
+            # Note: If perform_update succeeds, it ends in machine.reset() 
+            # and the code below is never reached.
+    else:
+        # If GitHub is down or fetch fails, just run the app
+        log("GitHub check failed. Running local app.")
+        run_app_main(lcd)
 
 if __name__ == "__main__":
     main()
