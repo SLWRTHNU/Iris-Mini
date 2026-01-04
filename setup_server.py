@@ -101,14 +101,27 @@ Content-Type: text/html
 CONFIG_SAVED_HTML = """HTTP/1.1 200 OK
 Content-Type: text/html
 
-<!DOCTYPE html>
-<html><body style="font-family:sans-serif; text-align:center; padding-top:50px; background:#f7f9fc;">
-    <div style="background:white; padding:30px; border-radius:12px; display:inline-block; box-shadow:0 4px 10px rgba(0,0,0,0.1);">
-        <h1 style="color:#1A936F;">✓ Settings Saved</h1>
-        <p>The device is hard-rebooting now.</p>
-        <p>Please wait 15 seconds for it to connect to your WiFi.</p>
+<html>
+<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; text-align:center; padding-top:100px; background-color:#f0f2f5; margin:0;">
+    <div style="background:white; padding:40px; border-radius:16px; display:inline-block; box-shadow:0 10px 25px rgba(0,0,0,0.05); max-width: 320px; width: 90%;">
+        
+        <div style="width:60px; height:60px; background:#e8f5e9; color:#2e7d32; border-radius:50%; line-height:60px; font-size:30px; margin: 0 auto 20px auto;">
+            ✔
+        </div>
+
+        <h1 style="color:#111827; margin:0 0 10px 0; font-size: 24px;">Settings Saved</h1>
+        
+        <div style="height:2px; background:#e5e7eb; width:100%; margin: 20px 0;"></div>
+        
+        <p style="color:#4b5563; font-size:16px; line-height:1.5; margin:0;">
+            Your Iris Mini is now rebooting. 
+        </p>
+        <p style="color:#9ca3af; font-size:14px; margin-top:10px;">
+            Please wait while it syncs your information.
+        </p>
     </div>
-</body></html>
+</body>
+</html>
 """
 
 # --- Server Logic ---
