@@ -66,87 +66,118 @@ BAR_HEIGHT  = TEXT_HEIGHT + 1
 Y_POS       = 128 - BAR_HEIGHT + 1
 STATUS_X    = 3
 
-# ---------- LCD Logic ----------
-
-def draw_bottom_status(lcd, status_msg, show_id=None):
-    if lcd is None: return
-    if show_id is None:
-        show_id = (status_msg.startswith("Connecting") or 
-                   status_msg.startswith("Connected") or 
-                   status_msg.startswith("ERR:"))
-
-    lcd.fill_rect(0, Y_POS - 1, lcd.width, BAR_HEIGHT, WHITE)
-    lcd.text(status_msg, STATUS_X, Y_POS, BLACK)
-
-    if show_id:
-        device_id = "N/A"
-        try:
-            with open(DEVICE_ID_FILE, "r") as f:
-                device_id = f.read().strip()
-        except: pass
-        id_text = "ID:{}".format(device_id)
-        id_x = lcd.width - (len(id_text) * 8) - 3
-        lcd.text(id_text, id_x, Y_POS, BLACK)
-    lcd.show()
-
-def draw_boot_logo(lcd):
-    if lcd is None: return
-    expected = LOGO_W * LOGO_H * 2
-    try:
-        st = os.stat(LOGO_FILE)
-        if st[6] != expected:
-            lcd.fill(BLACK)
-        else:
-            with open(LOGO_FILE, "rb") as f:
-                f.readinto(lcd.buffer)
-    except:
-        lcd.fill(BLACK)
-    draw_bottom_status(lcd, "Connecting")
+# ---------- LCD Logic (CLEANED) ----------
 
 def _lcd_backlight_on():
     try:
         import Pico_LCD_1_8 as drv
         from machine import Pin, PWM
+        # Using PWM ensures the screen actually gets enough power to light up
         bl_pin = Pin(drv.BL, Pin.OUT)
         pwm = PWM(bl_pin)
         pwm.freq(1000)
-        duty = int(CURRENT_BRIGHTNESS * 65535 / 100)
+        duty = int(100 * 65535 / 100) # Force 100%
         pwm.duty_u16(duty)
-        print("Backlight set to {}%".format(CURRENT_BRIGHTNESS))
-    except: pass
-
-def init_lcd():
-    if LCD_Driver is None: return None
-    try:
-        _lcd_hard_reset()
-        lcd = LCD_Driver()
-        if not hasattr(lcd, "show") and hasattr(lcd, "show_up"):
-            def _show(): lcd.show_up()
-            lcd.show = _show
-        _lcd_backlight_on()
-        lcd.fill(BLACK)
-        lcd.show()
-        return lcd
-    except Exception as e:
-        print("LCD init failed:", e)
-        return None
+    except:
+        # Fallback if PWM fails
+        try:
+            from machine import Pin
+            import Pico_LCD_1_8 as drv
+            Pin(drv.BL, Pin.OUT).value(1)
+        except: pass
 
 def _lcd_hard_reset():
     try:
         import Pico_LCD_1_8 as drv
         from machine import Pin
-        Pin(drv.BL, Pin.OUT).value(1)
         rst = Pin(drv.RST, Pin.OUT)
-        rst.value(0)
-        time.sleep_ms(50)
+        # Sequence: High -> Low (Reset) -> High (Run)
         rst.value(1)
-        time.sleep_ms(120)
+        time.sleep_ms(10)
+        rst.value(0)
+        time.sleep_ms(100) # Standard ST7735 reset pulse
+        rst.value(1)
+        time.sleep_ms(150) # Critical: Wait for controller to wake up
     except: pass
 
-def status_error(lcd, code):
-    msg = "ERR:{:03d}".format(code)
-    draw_bottom_status(lcd, msg)
-    time.sleep(2)
+def init_lcd():
+    if LCD_Driver is None: 
+        log("Driver not found")
+        return None
+    try:
+        _lcd_hard_reset()
+        lcd = LCD_Driver()
+        
+        # We now know for sure the method is .show()
+        # We'll create a standard alias to stay safe
+        lcd.display_update = lcd.show
+            
+        lcd.fill(BLACK) # Kill the colorful noise
+        lcd.display_update()
+        _lcd_backlight_on()
+        return lcd
+    except Exception as e:
+        log("LCD Init Error: {}".format(e))
+        return None
+
+def draw_bottom_status(lcd, status_msg, show_id=None):
+    if lcd is None: 
+        return
+
+    # 1. Determine if we should show the Device ID
+    # Usually we show it during connection or if an error occurs
+    if show_id is None:
+        show_id = any(status_msg.startswith(x) for x in ["Connecting", "Connected", "ERR:"])
+
+    # 2. Draw the Status Bar Background (White bar at the bottom)
+    # Y_POS is calculated as: 128 (height) - 11 (bar height) + 1 = 118
+    lcd.fill_rect(0, Y_POS - 1, lcd.width, BAR_HEIGHT, WHITE)
+    
+    # 3. Draw the Status Text (Black text on white bar)
+    lcd.text(status_msg, STATUS_X, Y_POS, BLACK)
+
+    # 4. Draw Device ID if required
+    if show_id:
+        device_id = "N/A"
+        try:
+            if DEVICE_ID_FILE in os.listdir():
+                with open(DEVICE_ID_FILE, "r") as f:
+                    device_id = f.read().strip()
+        except: 
+            pass
+            
+        id_text = "ID:{}".format(device_id)
+        # Calculate X position to right-align the ID text
+        # (8 pixels per character)
+        id_x = lcd.width - (len(id_text) * 8) - 3
+        lcd.text(id_text, id_x, Y_POS, BLACK)
+
+    # 5. Push the update to the physical screen
+    lcd.show()
+    
+def draw_boot_logo(lcd):
+    if lcd is None: return
+    # 160x128 * 2 bytes (RGB565) = 40,960 bytes
+    expected = 40960 
+    
+    try:
+        # Check file before trying to read it
+        st = os.stat(LOGO_FILE)
+        if st[6] == expected:
+            with open(LOGO_FILE, "rb") as f:
+                # Directly fill the driver's internal buffer
+                f.readinto(lcd.buffer)
+            log("Logo binary applied to buffer")
+        else:
+            log("Logo size wrong: {} bytes".format(st[6]))
+            lcd.fill(BLACK)
+    except Exception as e:
+        log("Logo File Error: {}".format(e))
+        lcd.fill(BLACK)
+        
+    # Send the buffer (either logo or black) to the hardware
+    lcd.show() 
+    draw_bottom_status(lcd, "Connecting")
 
 # ---------- WiFi & Updates ----------
 
@@ -275,20 +306,7 @@ def _safe_swap(target):
 
 def perform_update(vers_data, lcd, force=False):
     SKIP = ("bootloader.py", "github_token.py", "config.py", "local_version.txt", "Pico_LCD_1_8.py")
-    local_v = "0.0.0"
-    try:
-        with open(LOCAL_VERSION_FILE, "r") as f: 
-            local_v = f.read().strip()
-    except: pass
-
     remote_v = (vers_data.get("version") or "0.0.0").strip()
-    
-    # Check if update is actually needed
-    if (not force) and (local_v == remote_v):
-        log("No update needed. Local: {} Remote: {}".format(local_v, remote_v))
-        return True
-
-    log("Update available! {} -> {}".format(local_v, remote_v))
     
     files = vers_data.get("files", [])
     work = []
@@ -298,47 +316,39 @@ def perform_update(vers_data, lcd, force=False):
         if t not in SKIP: 
             work.append((p, t))
 
-    total = len(work)
-    if total == 0:
-        return True
+    if not work: return True
 
-    # 1. Start Updating
+    # 1. DOWNLOAD
     for idx, (p, t) in enumerate(work, start=1):
-        pct = int((idx * 100) / total)
-        msg = "Updating {}%".format(pct)
-        log(msg)
-        if lcd: 
-            draw_bottom_status(lcd, msg, show_id=False)
-        
-        if not gh_download_to_file(p, t + ".new"): 
-            log("Update failed on file: " + p)
-            return False
+        pct = int((idx * 100) / len(work))
+        log("Downloading: {} ({}%)".format(t, pct))
+        if lcd: draw_bottom_status(lcd, "Updating {}%".format(pct), show_id=False)
+        if not gh_download_to_file(p, t + ".new"): return False
         gc.collect()
 
-    # 2. Swap files
+    # 2. COMMIT
+    log("Swapping files...")
+    if lcd: draw_bottom_status(lcd, "Saving...", show_id=False)
     for p, t in work: 
         _safe_swap(t)
 
-    # 3. Save new version number
-    with open(LOCAL_VERSION_FILE, "w") as f: 
-        f.write(remote_v)
+    with open(LOCAL_VERSION_FILE, "w") as f: f.write(remote_v)
     
-    try: 
+    try:
+        import os
         os.sync() 
     except: pass
     
-    # 4. Final Reboot Status
-    log("Update complete. Performing hard reset...")
+    # 3. THE HARD RESET (The most important part)
+    log("REBOOTING NOW")
     if lcd:
         draw_bottom_status(lcd, "Rebooting...", show_id=False)
     
-    time.sleep_ms(1000) # Give the LCD controller time to finish the draw
+    time.sleep_ms(1200) # Give the screen time to show the text
     
-    # 5. FULL HARD REBOOT via Watchdog
-    from machine import WDT
-    wdt = WDT(timeout=10) # 10ms timeout triggers a hardware reset
-    while True:
-        pass
+    # Force the hardware to cycle power
+    machine.WDT(timeout=10) 
+    while True: pass
     
 
 def run_app_main(lcd=None):
@@ -478,7 +488,7 @@ def main():
     # If we get here, WiFi is successful
     log("Checking GitHub...")
     if lcd:
-        draw_bottom_status(lcd, "Checking...", show_id=True)
+        draw_bottom_status(lcd, "Connecting", show_id=True)
     
     vers_data = fetch_versions_json(lcd)
     
@@ -488,7 +498,7 @@ def main():
             log("Remote reboot command received.")
             machine.reset()
             
-        # 2. Check versions
+        # 2. Compare versions
         remote_v = (vers_data.get("version") or "0.0.0").strip()
         local_v = "0.0.0"
         try:
@@ -497,22 +507,19 @@ def main():
 
         force_update = vers_data.get("force_update", False)
 
-        # 3. ONLY hand off if NO update is needed
-        if local_v == remote_v and not force_update:
-            log("No update needed. Proceeding to App.")
-            run_app_main(lcd)
-        else:
+        # Update if force is True OR if versions don't match
+        if (local_v != remote_v) or force_update:
             log("Update required ({} -> {}). Starting...".format(local_v, remote_v))
-            if not perform_update(vers_data, lcd, force=force_update):
-                log("Update failed. Falling back to current app.")
-                run_app_main(lcd)
-            # Note: If perform_update succeeds, it ends in machine.reset() 
-            # and the code below is never reached.
-    else:
-        # If GitHub is down or fetch fails, just run the app
-        log("GitHub check failed. Running local app.")
-        run_app_main(lcd)
+            # perform_update contains the hardware reset
+            perform_update(vers_data, lcd, force=True) 
+            return # IMPORTANT: Stop main() execution here!
+            
+        log("No update needed (Version {}).".format(local_v))
+    
+    # 3. Only run the app if we didn't start an update
+    run_app_main(lcd)
 
 if __name__ == "__main__":
     main()
+
 
