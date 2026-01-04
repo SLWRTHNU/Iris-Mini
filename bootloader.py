@@ -10,7 +10,7 @@ import sys
 import utime
 
 # 0. SPEED BOOST: Overclock to 240MHz 
-machine.freq(240000000)
+#machine.freq(240000000)
 
 def log(msg):
     timestamp = time.ticks_ms()
@@ -27,7 +27,7 @@ VERSIONS_PATH = "versions.json"
 LOCAL_VERSION_FILE = "local_version.txt"
 DEVICE_ID_FILE     = "device_id.txt"
 
-CURRENT_BRIGHTNESS = 100
+CURRENT_BRIGHTNESS = 1
 
 def _get_token():
     try:
@@ -66,118 +66,62 @@ BAR_HEIGHT  = TEXT_HEIGHT + 1
 Y_POS       = 128 - BAR_HEIGHT + 1
 STATUS_X    = 3
 
-# ---------- LCD Logic (CLEANED) ----------
+# ---------- LCD Logic (ORDERED CORRECTLY) ----------
 
 def _lcd_backlight_on():
     try:
         import Pico_LCD_1_8 as drv
         from machine import Pin, PWM
-        # Using PWM ensures the screen actually gets enough power to light up
+        # Try PWM first for smooth brightness
         bl_pin = Pin(drv.BL, Pin.OUT)
         pwm = PWM(bl_pin)
         pwm.freq(1000)
-        duty = int(100 * 65535 / 100) # Force 100%
-        pwm.duty_u16(duty)
-    except:
-        # Fallback if PWM fails
+        pwm.duty_u16(65535) # 100% Brightness
+        log("Backlight: PWM ON")
+    except Exception as e:
+        # Fallback: Just turn the pin HIGH
         try:
-            from machine import Pin
             import Pico_LCD_1_8 as drv
+            from machine import Pin
             Pin(drv.BL, Pin.OUT).value(1)
-        except: pass
+            log("Backlight: PIN HIGH")
+        except:
+            log("Backlight: Failed to toggle")
 
 def _lcd_hard_reset():
     try:
         import Pico_LCD_1_8 as drv
         from machine import Pin
         rst = Pin(drv.RST, Pin.OUT)
-        # Sequence: High -> Low (Reset) -> High (Run)
         rst.value(1)
-        time.sleep_ms(10)
+        time.sleep_ms(20)
         rst.value(0)
-        time.sleep_ms(100) # Standard ST7735 reset pulse
+        time.sleep_ms(100)
         rst.value(1)
-        time.sleep_ms(150) # Critical: Wait for controller to wake up
-    except: pass
+        time.sleep_ms(200)
+        log("LCD Hardware Reset Complete")
+    except:
+        pass
 
 def init_lcd():
     if LCD_Driver is None: 
         log("Driver not found")
         return None
     try:
+        # These are now defined ABOVE this function
         _lcd_hard_reset()
         lcd = LCD_Driver()
         
-        # We now know for sure the method is .show()
-        # We'll create a standard alias to stay safe
+        # Point to the correct method we found earlier
         lcd.display_update = lcd.show
             
-        lcd.fill(BLACK) # Kill the colorful noise
+        lcd.fill(BLACK)
         lcd.display_update()
         _lcd_backlight_on()
         return lcd
     except Exception as e:
         log("LCD Init Error: {}".format(e))
         return None
-
-def draw_bottom_status(lcd, status_msg, show_id=None):
-    if lcd is None: 
-        return
-
-    # 1. Determine if we should show the Device ID
-    # Usually we show it during connection or if an error occurs
-    if show_id is None:
-        show_id = any(status_msg.startswith(x) for x in ["Connecting", "Connected", "ERR:"])
-
-    # 2. Draw the Status Bar Background (White bar at the bottom)
-    # Y_POS is calculated as: 128 (height) - 11 (bar height) + 1 = 118
-    lcd.fill_rect(0, Y_POS - 1, lcd.width, BAR_HEIGHT, WHITE)
-    
-    # 3. Draw the Status Text (Black text on white bar)
-    lcd.text(status_msg, STATUS_X, Y_POS, BLACK)
-
-    # 4. Draw Device ID if required
-    if show_id:
-        device_id = "N/A"
-        try:
-            if DEVICE_ID_FILE in os.listdir():
-                with open(DEVICE_ID_FILE, "r") as f:
-                    device_id = f.read().strip()
-        except: 
-            pass
-            
-        id_text = "ID:{}".format(device_id)
-        # Calculate X position to right-align the ID text
-        # (8 pixels per character)
-        id_x = lcd.width - (len(id_text) * 8) - 3
-        lcd.text(id_text, id_x, Y_POS, BLACK)
-
-    # 5. Push the update to the physical screen
-    lcd.show()
-    
-def draw_boot_logo(lcd):
-    if lcd is None: return
-    # 160x128 * 2 bytes (RGB565) = 40,960 bytes
-    expected = 40960 
-    
-    try:
-        # Check file before trying to read it
-        st = os.stat(LOGO_FILE)
-        if st[6] == expected:
-            with open(LOGO_FILE, "rb") as f:
-                # Directly fill the driver's internal buffer
-                f.readinto(lcd.buffer)
-            log("Logo binary applied to buffer")
-        else:
-            log("Logo size wrong: {} bytes".format(st[6]))
-            lcd.fill(BLACK)
-    except Exception as e:
-        log("Logo File Error: {}".format(e))
-        lcd.fill(BLACK)
-        
-    # Send the buffer (either logo or black) to the hardware
-    lcd.show() 
-    draw_bottom_status(lcd, "Connecting")
 
 # ---------- WiFi & Updates ----------
 
@@ -328,7 +272,7 @@ def perform_update(vers_data, lcd, force=False):
 
     # 2. COMMIT
     log("Swapping files...")
-    if lcd: draw_bottom_status(lcd, "Saving...", show_id=False)
+    if lcd: draw_bottom_status(lcd, "Saving", show_id=False)
     for p, t in work: 
         _safe_swap(t)
 
@@ -342,11 +286,10 @@ def perform_update(vers_data, lcd, force=False):
     # 3. THE HARD RESET (The most important part)
     log("REBOOTING NOW")
     if lcd:
-        draw_bottom_status(lcd, "Rebooting...", show_id=False)
+        draw_bottom_status(lcd, "Rebooting", show_id=False)
     
-    time.sleep_ms(1200) # Give the screen time to show the text
+    time.sleep(2) # IMPORTANT: Let the file system finish writing
     
-    # Force the hardware to cycle power
     machine.WDT(timeout=10) 
     while True: pass
     
@@ -370,14 +313,72 @@ def apply_staged_bootloader_if_present():
             os.rename("bootloader.py.next", "bootloader.py")
             machine.reset()
         except: pass
+        
+def draw_bottom_status(lcd, status_msg, show_id=None):
+    if lcd is None: return
+    # Show ID if connecting or if an error starts with ERR
+    if show_id is None:
+        show_id = any(status_msg.startswith(x) for x in ["Connecting", "Connected", "ERR:"])
+
+    # Draw status bar at the bottom
+    lcd.fill_rect(0, Y_POS - 1, lcd.width, BAR_HEIGHT, WHITE)
+    lcd.text(status_msg, STATUS_X, Y_POS, BLACK)
+
+    if show_id:
+        device_id = "N/A"
+        try:
+            if DEVICE_ID_FILE in os.listdir():
+                with open(DEVICE_ID_FILE, "r") as f:
+                    device_id = f.read().strip()
+        except: pass
+        id_text = "ID:{}".format(device_id)
+        id_x = lcd.width - (len(id_text) * 8) - 3
+        lcd.text(id_text, id_x, Y_POS, BLACK)
+    lcd.show()
+
+def draw_boot_logo(lcd):
+    if lcd is None: return
+    # 160x128 * 2 bytes = 40,960 bytes
+    expected = 40960 
+    try:
+        st = os.stat(LOGO_FILE)
+        if st[6] == expected:
+            with open(LOGO_FILE, "rb") as f:
+                f.readinto(lcd.buffer)
+            log("Logo binary loaded.")
+        else:
+            log("Logo size mismatch.")
+            lcd.fill(BLACK)
+    except Exception as e:
+        log("Logo error: {}".format(e))
+        lcd.fill(BLACK)
+        
+    lcd.show() 
+    draw_bottom_status(lcd, "Connecting")
 
 # ---------- Runner ----------
 
 def main():
+    # 1. Give the hardware a moment to stabilize after a reboot
+    time.sleep_ms(500) 
+    
+    # 2. Light up the onboard LED so you know the code is actually running
+    try:
+        led = machine.Pin("LED", machine.Pin.OUT)
+        led.on()
+    except:
+        pass
+
     log("BOOTLOADER: Starting...")
+    
+    # 3. Start the LCD
+    lcd = init_lcd()
+    if lcd:
+        draw_boot_logo(lcd)
+    
     apply_staged_bootloader_if_present()
     
-    # 1. Check for config.py before doing anything else
+    # 2. Check for config.py
     config_exists = False
     try:
         os.stat("config.py")
@@ -385,138 +386,73 @@ def main():
     except OSError:
         config_exists = False
 
-    # 2. If no config, enter Setup Mode
+    # 3. Setup Mode (If no config)
     if not config_exists:
-        lcd = init_lcd()
-        # Start Access Point
+        log("Entering Setup Mode...")
         ap = network.WLAN(network.AP_IF)
         ap.active(True)
-        
-        # This is the safest way to set an Open network across different firmware versions
         ap.config(essid="Iris Mini", security=0)
-        
-        ip = "192.168.4.1" # Standard MicroPython AP IP
+        ip = "192.168.4.1"
         
         if lcd:
-            # Assumes: BLACK = 0x0000, WHITE = 0xFFFF
-            # Note: 0xFFE0 is yellow in RGB565
             YELLOW = 0xF81F
-
-            def _text_w_px(s):  # built-in 8px font in most Pico LCD drivers
-                return len(s) * 8
-
+            M, LH, IND = 8, 14, 12 # Define the missing margins
+            w = 160
+            
+            def _text_w_px(s): return len(s) * 8
             def text_center(s, y, color, w=160):
                 x = max(0, (w - _text_w_px(s)) // 2)
                 lcd.text(s, x, y, color)
 
-            # If your display is 128x160 (portrait), change w/h accordingly.
-            w = 160
-            h = 128
-
-            M   = 8    # outer margin
-            LH  = 14   # line height
-            IND = 12   # indent for sub-lines
-
             lcd.fill(BLACK)
-
-            # Title block
             text_center("IRIS SETUP", M, YELLOW, w=w)
             text_center("Follow these steps:", M + LH, WHITE, w=w)
-
             y = M + (LH * 3)
-
-            # Step 1
             lcd.text("1) Connect to WiFi:", M, y, WHITE); y += LH
             lcd.text("   Iris Mini", M + IND, y, YELLOW); y += (LH + 15)
-
-            # Step 2
             lcd.text("2) Open this URL:", M, y, WHITE); y += LH
-            url = "{}".format(ip) if ip else "http://(starting...)"
-
-            # Split if needed so it never hugs the right edge
-            if _text_w_px(url) > (w - (M + IND)):
-                lcd.text("   http://", M + IND, y, YELLOW); y += LH
-                lcd.text("   {}".format(ip if ip else "(starting...)"), M + IND, y, YELLOW)
-            else:
-                lcd.text("   {}".format(url), M + IND, y, YELLOW)
-
+            lcd.text("   http://{}".format(ip), M + IND, y, YELLOW)
             lcd.show()
-        # --- end setup screen ---
 
-        log("Config missing. Setup Mode active at http://" + ip)
-
-        # We will build this file next
         import setup_server
-        setup_server.run() 
-        
-        # Add these lines right after the server finishes/machine resets
-        ap = network.WLAN(network.AP_IF)
-        ap.active(False) 
-        log("Setup complete. AP disabled.")
-        return # Stop here so it doesn't try to run the app
-
-    # 3. NORMAL BOOT (If config exists)
-    lcd = init_lcd()
-    if lcd: draw_boot_logo(lcd)
-
-    ssid, pwd = load_config_wifi()
-    
-    # Attempt connection
-    if not ssid or not connect_wifi(lcd, ssid, pwd):
-        log("WiFi Failed. Halting.")
-        if lcd:
-            lcd.fill(0x0000) # BLACK
-            
-            # Title
-            lcd.text("WIFI FAILED", 40, 15, 0xFC00) # RED
-            
-            # Instructions
-            lcd.text("1. Power cycle", 10, 40, 0xFFFF) # WHITE
-            lcd.text("   your Iris", 10, 50, 0xFFFF)
-            
-            lcd.text("2. Power cycle", 10, 70, 0xFFFF)
-            lcd.text("   your router", 10, 80, 0xFFFF)
-            
-            lcd.text("3. Factory Reset", 10, 100, 0xFFFF)
-            lcd.text("   to reconfigure", 10, 110, 0xFFFF)
-            
-            lcd.show()
-        
-        # Stop execution so they can read the screen
+        setup_server.run()
         return
 
-    # If we get here, WiFi is successful
-    log("Checking GitHub...")
-    if lcd:
-        draw_bottom_status(lcd, "Connecting", show_id=True)
-    
+    # 4. Normal Boot
+    ssid, pwd = load_config_wifi()
+    if not ssid or not connect_wifi(lcd, ssid, pwd):
+        log("WiFi Failed.")
+        if lcd:
+            lcd.fill(0x0000) # BLACK 
+            lcd.text("WIFI FAILED", 40, 15, 0xFC00) # RED
+            lcd.text("1. Power cycle", 10, 40, 0xFFFF)
+            lcd.text("   your Iris", 10, 50, 0xFFFF)
+            lcd.text("2. Power cycle", 10, 70, 0xFFFF)
+            lcd.text("   your router", 10, 80, 0xFFFF)
+            lcd.text("3. Factory Reset", 10, 100, 0xFFFF)
+            lcd.text("   to reconfigure", 10, 110, 0xFFFF)
+            lcd.show()
+        return
+
+    # 5. Check for Updates
+    log("Checking for updates...")
     vers_data = fetch_versions_json(lcd)
     
     if vers_data:
-        # 1. Handle remote reboot command
         if vers_data.get("remote_command") == "reboot":
-            log("Remote reboot command received.")
             machine.reset()
             
-        # 2. Compare versions
         remote_v = (vers_data.get("version") or "0.0.0").strip()
         local_v = "0.0.0"
         try:
             with open(LOCAL_VERSION_FILE, "r") as f: local_v = f.read().strip()
         except: pass
 
-        force_update = vers_data.get("force_update", False)
-
-        # Update if force is True OR if versions don't match
-        if (local_v != remote_v) or force_update:
-            log("Update required ({} -> {}). Starting...".format(local_v, remote_v))
-            # perform_update contains the hardware reset
-            perform_update(vers_data, lcd, force=True) 
-            return # IMPORTANT: Stop main() execution here!
-            
-        log("No update needed (Version {}).".format(local_v))
+        if (local_v != remote_v) or vers_data.get("force_update"):
+            perform_update(vers_data, lcd, force=True)
+            return 
     
-    # 3. Only run the app if we didn't start an update
+    # 6. Success - Run App
     run_app_main(lcd)
 
 if __name__ == "__main__":
