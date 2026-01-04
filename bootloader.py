@@ -272,41 +272,74 @@ def _safe_swap(target):
     try: os.remove(bak)
     except: pass
  
+
 def perform_update(vers_data, lcd, force=False):
     SKIP = ("bootloader.py", "github_token.py", "config.py", "local_version.txt", "Pico_LCD_1_8.py")
     local_v = "0.0.0"
     try:
-        with open(LOCAL_VERSION_FILE, "r") as f: local_v = f.read().strip()
+        with open(LOCAL_VERSION_FILE, "r") as f: 
+            local_v = f.read().strip()
     except: pass
 
     remote_v = (vers_data.get("version") or "0.0.0").strip()
+    
+    # Check if update is actually needed
     if (not force) and (local_v == remote_v):
-        log("No update needed.")
+        log("No update needed. Local: {} Remote: {}".format(local_v, remote_v))
         return True
 
+    log("Update available! {} -> {}".format(local_v, remote_v))
+    
     files = vers_data.get("files", [])
     work = []
     for f in files:
         p = f.get("path")
         t = f.get("target") or p.split("/")[-1]
-        if t not in SKIP: work.append((p, t))
+        if t not in SKIP: 
+            work.append((p, t))
 
     total = len(work)
+    if total == 0:
+        return True
+
+    # 1. Start Updating
     for idx, (p, t) in enumerate(work, start=1):
         pct = int((idx * 100) / total)
-        draw_bottom_status(lcd, "Updating {}%".format(pct), show_id=False)
-        if not gh_download_to_file(p, t + ".new"): return False
+        msg = "Updating {}%".format(pct)
+        log(msg)
+        if lcd: 
+            draw_bottom_status(lcd, msg, show_id=False)
+        
+        if not gh_download_to_file(p, t + ".new"): 
+            log("Update failed on file: " + p)
+            return False
         gc.collect()
 
-    for p, t in work: _safe_swap(t)
+    # 2. Swap files
+    for p, t in work: 
+        _safe_swap(t)
 
-    with open(LOCAL_VERSION_FILE, "w") as f: f.write(remote_v)
-    try: os.sync()
+    # 3. Save new version number
+    with open(LOCAL_VERSION_FILE, "w") as f: 
+        f.write(remote_v)
+    
+    try: 
+        os.sync() 
     except: pass
     
-    draw_bottom_status(lcd, "Rebooting", show_id=False)
-    time.sleep_ms(300)
-    machine.reset()
+    # 4. Final Reboot Status
+    log("Update complete. Performing hard reset...")
+    if lcd:
+        draw_bottom_status(lcd, "Rebooting...", show_id=False)
+    
+    time.sleep_ms(1000) # Give the LCD controller time to finish the draw
+    
+    # 5. FULL HARD REBOOT via Watchdog
+    from machine import WDT
+    wdt = WDT(timeout=10) # 10ms timeout triggers a hardware reset
+    while True:
+        pass
+    
 
 def run_app_main(lcd=None):
     gc.collect()
@@ -443,15 +476,25 @@ def main():
         return
 
     # If we get here, WiFi is successful
-    log("Checking GitHub (Single-Trip)...")
+    log("Checking GitHub...")
+    if lcd:
+        draw_bottom_status(lcd, "Checking...", show_id=True)
     
     vers_data = fetch_versions_json(lcd)
     
     if vers_data:
+        # Check for remote reboot command
         if vers_data.get("remote_command") == "reboot":
+            log("Remote reboot command received.")
             machine.reset()
+            
         force_update = vers_data.get("force_update", False)
-        perform_update(vers_data, lcd, force=force_update)
+        # perform_update will handle the "Updating" and "Rebooting" status messages
+        if not perform_update(vers_data, lcd, force=force_update):
+            log("Update process failed.")
+            if lcd:
+                draw_bottom_status(lcd, "Update Error", show_id=False)
+            time.sleep(2)
     
     run_app_main(lcd)
 
