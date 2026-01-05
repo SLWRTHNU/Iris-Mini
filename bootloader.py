@@ -27,7 +27,7 @@ VERSIONS_PATH = "versions.json"
 LOCAL_VERSION_FILE = "local_version.txt"
 DEVICE_ID_FILE     = "device_id.txt"
 
-CURRENT_BRIGHTNESS = 1
+CURRENT_BRIGHTNESS = 100
 
 def _get_token():
     try:
