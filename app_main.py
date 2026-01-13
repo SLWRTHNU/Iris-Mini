@@ -1,194 +1,169 @@
-def log(msg):
-    # Change 'time' to 'utime' here
-    timestamp = utime.ticks_ms()
-    print("[{:>8}ms] {}".format(timestamp, msg))
-    
-# app_main.py (Iris Classic 1.8")
 import utime
 import network
 import ntptime
 import urequests as requests
 import gc
-from machine import Timer
+from machine import Timer, WDT, reset
 import control_poll
 
-# Optional: not all MicroPython builds have setdefaulttimeout()
-try:
-    import socket
-    if hasattr(socket, "setdefaulttimeout"):
-        socket.setdefaulttimeout(2)
-except Exception:
-    pass
+def log(msg):
+    gc.collect() 
+    free = gc.mem_free()
+    timestamp = utime.ticks_ms()
+    print("[{:>8}ms] [RAM Free: {:>5}B] {}".format(timestamp, free, msg))
 
 # ---------- Config ----------
 import config
-
-# Helper to get config values with fallbacks
 def cfg(name, default):
     return getattr(config, name, default)
 
-# Assign portal values to variables used in the app
 WIFI_SSID = cfg('WIFI_SSID', '')
 WIFI_PASSWORD = cfg('WIFI_PASSWORD', '')
 NS_URL = cfg('NS_URL', '')
-NS_TOKEN = cfg('API_SECRET', '')     # Matches 'token' in portal
+NS_TOKEN = cfg('API_SECRET', '')
 API_ENDPOINT = cfg('API_ENDPOINT', '/api/v1/entries/sgv.json?count=2')
 DISPLAY_UNITS = cfg('UNITS', 'mmol')
 
-# Ensure these are numbers for comparison logic
 LOW_THRESHOLD = float(cfg('THRESHOLD_LOW', 4.0))
 HIGH_THRESHOLD = float(cfg('THRESHOLD_HIGH', 11.0))
 STALE_MIN = int(cfg('STALE_MINS', 7))
-
-# The new Alert Toggles
 ALERT_DOUBLE_UP = cfg('ALERT_DOUBLE_UP', True)
 ALERT_DOUBLE_DOWN = cfg('ALERT_DOUBLE_DOWN', True)
 
-# ---------- Display driver ----------
-try:
-    from Pico_LCD_1_8 import LCD_1inch8 as LCD_Driver
-except ImportError:
-    try:
-        from ST7735 import ST7735 as LCD_Driver
-    except ImportError:
-        raise RuntimeError("Missing 1.8 inch LCD driver (Pico_LCD_1_8.py or ST7735.py)")
-
-# ---------- Fonts / Writer ----------
+# ---------- Display driver / Fonts ----------
+from Pico_LCD_1_8 import LCD_1inch8 as LCD_Driver
 from writer import CWriter
 import small_font as font_small
 import age_small_font as age_font_small
 import large_font as font_big
 import arrows_font as font_arrows
 import heart as font_heart
-import delta as font_delta # Imported as font_delta to avoid naming conflicts
+import delta as font_delta
 
-# ---------- Colors ----------
-BLACK  = 0x0000
-WHITE  = 0xFFFF
-RED    = 0xFC00
-YELLOW = 0xF81F
-GREEN  = 0x001F
-
-# --- Global Heart State ---
+BLACK, WHITE, RED, YELLOW, GREEN = 0x0000, 0xFFFF, 0xFC00, 0xF81F, 0x001F
 hb_state = True
+UNIX_2000_OFFSET = 946684800
 
-# ---------- Helpers ----------
+# ---------- Helper Functions ----------
+
 def get_device_id():
     try:
         with open("device_id.txt", "r") as f:
             return f.read().strip()
-    except Exception:
-        return "N/A"
+    except: return "N/A"
 
-def connect_wifi(ssid, pwd, timeout_sec=12):
+def connect_wifi(ssid, pwd, timeout_sec=15):
     sta = network.WLAN(network.STA_IF)
     sta.active(True)
-    if sta.isconnected():
-        return True
+    
+    # 0xa11140 is the constant for "Performance Mode" (No Power Saving)
+    sta.config(pm=0xa11140) 
+    
+    if sta.isconnected(): return True
+    log("Connecting WiFi...")
     sta.connect(ssid, pwd)
     t0 = utime.ticks_ms()
     while not sta.isconnected():
-        if utime.ticks_diff(utime.ticks_ms(), t0) > timeout_sec * 1000:
-            return False
-        utime.sleep(0.25)
+        if utime.ticks_diff(utime.ticks_ms(), t0) > timeout_sec * 1000: return False
+        utime.sleep(0.5)
     return True
 
-def ntp_sync(retries=3, delay_s=1):
-    for _ in range(retries):
-        try:
-            ntptime.settime()
-            return True
-        except Exception:
-            utime.sleep(delay_s)
-    return False
+
+def ntp_sync():
+    try:
+        before = now_unix_s()
+        ntptime.settime()
+        after = now_unix_s()
+        drift = after - before
+        log("NTP Sync Successful. Drift: {}s".format(drift))
+        return True
+    except Exception as e:
+        log("NTP Sync Failed: {}".format(e))
+        return False
 
 def ensure_count2(endpoint: str) -> str:
-    if "count=" in endpoint:
-        return endpoint.replace("count=1", "count=2")
+    if "count=" in endpoint: return endpoint.replace("count=1", "count=2")
     joiner = "&" if "?" in endpoint else "?"
     return endpoint + joiner + "count=2"
 
 def fetch_ns_entries():
-    headers = {}
-    if NS_TOKEN:
-        headers["api-secret"] = NS_TOKEN
-    ep = ensure_count2(API_ENDPOINT)
-    url = NS_URL + ep
+    gc.collect() # Clean up before starting
+    headers = {
+        "Accept": "application/json",
+        "Connection": "close"  # <--- Crucial: Tells server to kill the socket
+    }
+    if NS_TOKEN: headers["api-secret"] = NS_TOKEN
+    url = NS_URL + ensure_count2(API_ENDPOINT)
     resp = None
     try:
-        resp = requests.get(url, headers=headers)
-        data = resp.json()
-        resp.close()
-        return data
-    except Exception:
-        try:
-            if resp: resp.close()
-        except Exception: pass
-        return None
+        # Reduced timeout to 5s to stay well under the 8s Watchdog
+        resp = requests.get(url, headers=headers, timeout=5)
+        if resp.status_code == 200:
+            return resp.json()
+    except Exception as e:
+        log("Fetch error: {}".format(e))
+    finally:
+        if resp:
+            resp.close()
+            del resp
+        gc.collect() # <--- Force cleanup of the socket memory immediately
+    return None
 
 def mgdl_to_units(val_mgdl: float) -> float:
-    if str(DISPLAY_UNITS).lower() == "mgdl":
-        return float(val_mgdl)
+    if str(DISPLAY_UNITS).lower() == "mgdl": return float(val_mgdl)
     return round(float(val_mgdl) / 18.0, 1)
 
 def direction_to_arrow(direction: str) -> str:
     return {
-        "Flat": "J",
-        "SingleUp": "O",
-        "DoubleUp": "OO",
-        "SingleDown": "P",
-        "DoubleDown": "PP",
-        "FortyFiveUp": "L",
-        "FortyFiveDown": "N",
-        "NOT COMPUTABLE": "--",
-        "NONE": "--",
+        "Flat": "J", "SingleUp": "O", "DoubleUp": "OO",
+        "SingleDown": "P", "DoubleDown": "PP",
+        "FortyFiveUp": "L", "FortyFiveDown": "N"
     }.get(direction or "NONE", "")
 
-
 def parse_entries(data):
-    if not data or not isinstance(data, list) or len(data) < 1:
+    if not data or not isinstance(data, list) or len(data) < 1: 
         return None
+        
     cur = data[0]
-    if "sgv" not in cur or "date" not in cur:
+    cur_mgdl = cur.get("sgv")
+    
+    # Use 'mills' for integer precision. Fallback to 'date' if 'mills' is missing.
+    # We force it to an int immediately to avoid float math issues.
+    cur_time_ms = int(cur.get("mills", cur.get("date", 0)))
+    
+    if cur_mgdl is None or cur_time_ms == 0: 
         return None
-    cur_mgdl = cur["sgv"]
-    cur_time_ms = cur["date"]
-    direction = cur.get("direction", "NONE")
+    
     delta_units = None
-    if len(data) > 1 and isinstance(data[1], dict) and "sgv" in data[1]:
-        prev_mgdl = data[1]["sgv"]
-        delta_mgdl = float(cur_mgdl) - float(prev_mgdl)
-        if str(DISPLAY_UNITS).lower() == "mgdl":
-            delta_units = float(delta_mgdl)
-        else:
-            delta_units = round(delta_mgdl / 18.0, 1)
+    if len(data) > 1 and "sgv" in data[1]:
+        # Nightscout best practice: Only calculate delta if the second 
+        # reading is within a reasonable timeframe (e.g., 5-10 mins)
+        prev_mgdl = data[1].get("sgv")
+        if prev_mgdl is not None:
+            delta_mgdl = float(cur_mgdl) - float(prev_mgdl)
+            if str(DISPLAY_UNITS).lower() == "mgdl":
+                delta_units = delta_mgdl
+            else:
+                delta_units = round(delta_mgdl / 18.0, 1)
+        
     return {
         "bg": mgdl_to_units(cur_mgdl),
-        "time_ms": int(cur_time_ms),
-        "direction": direction,
-        "arrow": direction_to_arrow(direction),
+        "time_ms": cur_time_ms, # This is now a clean integer from 'mills'
+        "direction": cur.get("direction", "NONE"),
+        "arrow": direction_to_arrow(cur.get("direction")),
         "delta": delta_units,
     }
 
-def fmt_bg(bg_val: float) -> str:
-    if str(DISPLAY_UNITS).lower() == "mgdl":
-        return str(int(round(bg_val)))
-    return "{:.1f}".format(bg_val)
+def fmt_bg(bg_val) -> str:
+    return str(int(round(bg_val))) if str(DISPLAY_UNITS).lower() == "mgdl" else "{:.1f}".format(bg_val)
 
 def fmt_delta(delta_val) -> str:
     if delta_val is None: return ""
-    if str(DISPLAY_UNITS).lower() == "mgdl":
-        return "{:+.0f}".format(delta_val)
-    return "{:+.1f}".format(delta_val)
-
-UNIX_2000_OFFSET = 946684800
+    return "{:+.0f}".format(delta_val) if str(DISPLAY_UNITS).lower() == "mgdl" else "{:+.1f}".format(delta_val)
 
 def now_unix_s():
     t = utime.time()
-    if t < 1200000000:
-        return t + UNIX_2000_OFFSET
-    return t
-
+    return t + UNIX_2000_OFFSET if t < 1200000000 else t
 def draw_screen(lcd, w_small, w_age_small, w_big, w_arrow, w_heart, w_delta_icon, last, hb_state, heart_only=False): 
     # --- POSITIONAL CONSTANTS ---
     # These must be defined first so both full and partial draws use the same math
@@ -336,91 +311,86 @@ def draw_screen(lcd, w_small, w_age_small, w_big, w_arrow, w_heart, w_delta_icon
 
     lcd.show()
 
+# ---------- Main Loop ----------
+
 def main(lcd=None):
+    log("--- SYSTEM START / REBOOT ---")
+    wdt = WDT(timeout=8000) # Hardware fail-safe
+    
     global hb_state
-    gc.collect()
-
-    # --- 1. INITIALIZE VARIABLES (The Fix) ---
-    last = None            # Current glucose data
-    last_hb_state = None   # Track heartbeat changes
-    # ------------------------------------------
-
-    if lcd is None:
-        lcd = LCD_Driver()
-
-    if not hasattr(lcd, "show") and hasattr(lcd, "show_up"):
-        def _show():
-            lcd.show_up()
-        lcd.show = _show
-
+    last, last_drawn_hb = None, hb_state 
+    if lcd is None: lcd = LCD_Driver()
+    
     # Initialize Writers
     w_small = CWriter(lcd, font_small, fgcolor=WHITE, bgcolor=BLACK, verbose=False)
     w_age_small = CWriter(lcd, age_font_small, fgcolor=WHITE, bgcolor=BLACK, verbose=False)
-    w_small.set_spacing(3)
-    w_age_small.set_spacing(2)
     w_big = CWriter(lcd, font_big, fgcolor=WHITE, bgcolor=BLACK, verbose=False)
     w_arrow = CWriter(lcd, font_arrows, fgcolor=WHITE, bgcolor=BLACK, verbose=False)
     w_heart = CWriter(lcd, font_heart, fgcolor=RED, bgcolor=BLACK, verbose=False)
     w_delta_icon = CWriter(lcd, font_delta, fgcolor=WHITE, bgcolor=BLACK, verbose=False)
-    w_arrow.set_spacing(8)
 
-    # Initial Loading Call
+    # Initial Screen Setup
     draw_screen(lcd, w_small, w_age_small, w_big, w_arrow, w_heart, w_delta_icon, None, hb_state)
-
-    connect_wifi(WIFI_SSID, WIFI_PASSWORD)
-    ntp_sync()
     
-    # Timing Intervals
-    GLUCOSE_INTERVAL = 5000  # 5 seconds
-    CONTROL_INTERVAL = 60000  # 60 seconds 
-
-    next_glucose = utime.ticks_ms()
-    next_control = utime.ticks_ms() + 5000
+    if connect_wifi(WIFI_SSID, WIFI_PASSWORD): 
+        ntp_sync()
     
-    # Track the last state we actually drew to avoid over-refreshing
-    last_drawn_hb = hb_state 
-
-    # Define the timer callback
-    def toggle_heart(t):
+    # --- UPDATED TIMING INTERVALS ---
+    GLUCOSE_INTERVAL = 15000    # 15 seconds
+    CONTROL_INTERVAL = 300000   # 5 minutes (Corrected)
+    
+    next_glucose = utime.ticks_ms() + 1000
+    next_control = utime.ticks_ms() + 30000 # First check 30s after boot
+    
+    # Safe Heartbeat Toggle
+    def toggle_hb(t):
         global hb_state
         hb_state = not hb_state
 
-    # Initialize Timer 0 to blink every 500ms
     heart_timer = Timer(-1)
-    heart_timer.init(period=1000, mode=Timer.PERIODIC, callback=toggle_heart)
+    heart_timer.init(period=1000, mode=Timer.PERIODIC, callback=toggle_hb)
 
     while True:
+        wdt.feed() # Pat the dog
         now = utime.ticks_ms()
+        
+        # Network connection check - reboots if failed
+        sta = network.WLAN(network.STA_IF)
+        if not sta.isconnected():
+            log("WiFi lost. Attempting reconnect...")
+            connect_wifi(WIFI_SSID, WIFI_PASSWORD)
+            # If we just reconnected, sync time again
+            if sta.isconnected():
+                ntp_sync()
 
-        # 1. Heartbeat Logic (High Priority)
+        # 1. Heartbeat Blink
         if hb_state != last_drawn_hb:
             last_drawn_hb = hb_state
-            # Only blink if we aren't currently on the loading screen
-            if last is not None:
+            if last: 
                 draw_screen(lcd, w_small, w_age_small, w_big, w_arrow, w_heart, w_delta_icon, last, hb_state, heart_only=True)
                 
-        # 2. Glucose Fetch
+        # 2. Glucose Fetch (15s)
         if utime.ticks_diff(now, next_glucose) >= 0:
             log("Fetching Glucose...")
             data = fetch_ns_entries()
             parsed = parse_entries(data)
             if parsed:
                 last = parsed
-                # Force a redraw immediately when new data arrives
                 draw_screen(lcd, w_small, w_age_small, w_big, w_arrow, w_heart, w_delta_icon, last, hb_state)
-            
             next_glucose = utime.ticks_add(now, GLUCOSE_INTERVAL)
-            gc.collect()
 
-        # 3. Control/Update Poll
+        # 3. Control Poll (5m)
         if utime.ticks_diff(now, next_control) >= 0:
+            log("Checking for Control Updates...")
             control_poll.tick(lcd)
             next_control = utime.ticks_add(now, CONTROL_INTERVAL)
         
-        utime.sleep_ms(50)
-        
+        utime.sleep_ms(100)
         
 if __name__ == "__main__":
-    main()
-
-
+    try:
+        main()
+    except Exception as e:
+        print("CRITICAL CRASH:", e)
+        utime.sleep(5)
+        reset()
