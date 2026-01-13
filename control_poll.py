@@ -6,7 +6,7 @@ import urequests as requests
 import json
 import os
 
-CONTROL_POLL_MS = 5_000 # 5 seconds for testing
+CONTROL_POLL_MS = 60_000
 _last_poll_ms = 0
 LAST_REBOOT_REV_FILE = "last_control_hash.txt"
 
