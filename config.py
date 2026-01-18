@@ -1,0 +1,11 @@
+WIFI_SSID = '2.4G'
+WIFI_PASSWORD = 'Theworks1!'
+NS_URL = 'https://sennaloop-673ad2782247.herokuapp.com'
+API_SECRET = 'picodispla-8ec1ec6023f4f936'
+API_ENDPOINT = '/api/v1/entries/sgv.json?count=2'
+UNITS = 'mmol'
+THRESHOLD_LOW = 4.0
+THRESHOLD_HIGH = 11.0
+STALE_MINS = 7
+ALERT_DOUBLE_UP = True
+ALERT_DOUBLE_DOWN = True
