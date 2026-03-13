@@ -3,7 +3,7 @@
 # If config exists: runs app_main
 # If no config: runs setup mode
 
-print("Iris Classic - Starting...")
+print("Iris Mini - Starting...")
 
 try:
     import bootloader

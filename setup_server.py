@@ -220,7 +220,7 @@ Content-Type: text/html
         <div style="height:2px; background:#e5e7eb; width:100%; margin: 20px 0;"></div>
         
         <p style="color:#4b5563; font-size:16px; line-height:1.5; margin:0 0 12px 0;">
-            Your Iris Classic is now syncing your data and connecting to your network.
+            Your Iris Mini is now syncing your data and connecting to your network.
         </p>
         
         <p style="color:#1A936F; font-weight:600; font-size:15px; margin:0;">
@@ -244,9 +244,9 @@ def run():
     # Start Access Point
     ap.active(True)
     try:
-        ap.config(essid="Iris Classic", security=0)
+        ap.config(essid="Iris Mini", security=0)
     except:
-        ap.config(essid="Iris Classic")
+        ap.config(essid="Iris Mini")
 
     log("AP Active: {}".format(ap.ifconfig()))
 
