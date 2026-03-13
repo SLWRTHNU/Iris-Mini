@@ -1043,7 +1043,7 @@ def draw_loading_once(lcd, writer, st):
 
 def draw_all_fields_if_needed(
     lcd,
-    w_small, w_age_small, w_arrow, w_heart, w_delta_icon,
+    w_large, w_small, w_age_small, w_arrow, w_heart, w_delta_icon,
     hb_state,
     st
 ):
@@ -1226,7 +1226,7 @@ async def task_factory_reset_button(lcd, w_small, st):
         machine_reset()
 
 
-async def task_heartbeat(lcd, w_small, w_age_small, w_arrow, w_heart, w_delta_icon, st):
+async def task_heartbeat(lcd, w_large, w_small, w_age_small, w_arrow, w_heart, w_delta_icon, st):
     global hb_state, last, wdt, factory_reset_exit_requested
     
     while True:
@@ -1250,24 +1250,24 @@ async def task_heartbeat(lcd, w_small, w_age_small, w_arrow, w_heart, w_delta_ic
 
         hb_state = not hb_state
         draw_all_fields_if_needed(
-            lcd, w_small, w_age_small, w_arrow, w_heart, w_delta_icon,
+            lcd, w_large, w_small, w_age_small, w_arrow, w_heart, w_delta_icon,
             hb_state, st
         )
         await asyncio.sleep(1)
 
 
-async def task_age_redraw(lcd, w_small, w_age_small, w_arrow, w_heart, w_delta_icon, st):
+async def task_age_redraw(lcd, w_large, w_small, w_age_small, w_arrow, w_heart, w_delta_icon, st):
     global last, hb_state
     while True:
         if last:
             draw_all_fields_if_needed(
-                lcd, w_small, w_age_small, w_arrow, w_heart, w_delta_icon,
+                lcd, w_large, w_small, w_age_small, w_arrow, w_heart, w_delta_icon,
                 hb_state, st
             )
         await asyncio.sleep(60)
 
 
-async def task_glucose_fetch(lcd, w_small, w_age_small, w_arrow, w_heart, w_delta_icon, st):
+async def task_glucose_fetch(lcd, w_large, w_small, w_age_small, w_arrow, w_heart, w_delta_icon, st):
     global last, hb_state, wifi_ok, wdt
 
     await asyncio.sleep(1 if wifi_ok else 60)
@@ -1304,7 +1304,7 @@ async def task_glucose_fetch(lcd, w_small, w_age_small, w_arrow, w_heart, w_delt
                 last = parsed
                 check_glucose_alerts(last["bg"])
                 draw_all_fields_if_needed(
-                    lcd, w_small, w_age_small, w_arrow, w_heart, w_delta_icon,
+                    lcd, w_large, w_small, w_age_small, w_arrow, w_heart, w_delta_icon,
                     hb_state, st
                 )
             gc.collect()
@@ -1394,7 +1394,7 @@ async def task_wifi_reconnect(st):
             wdt.feed()
 
 
-async def async_main(lcd, w_small, w_age_small, w_arrow, w_heart, w_delta_icon, st):
+async def async_main(lcd, w_large, w_small, w_age_small, w_arrow, w_heart, w_delta_icon, st):
     global wdt
 
     asyncio.create_task(task_factory_reset_button(lcd, w_small, st))
@@ -1403,9 +1403,9 @@ async def async_main(lcd, w_small, w_age_small, w_arrow, w_heart, w_delta_icon, 
 
     await asyncio.sleep(2)
 
-    asyncio.create_task(task_heartbeat(lcd, w_small, w_age_small, w_arrow, w_heart, w_delta_icon, st))
-    asyncio.create_task(task_age_redraw(lcd, w_small, w_age_small, w_arrow, w_heart, w_delta_icon, st))
-    asyncio.create_task(task_glucose_fetch(lcd, w_small, w_age_small, w_arrow, w_heart, w_delta_icon, st))
+    asyncio.create_task(task_heartbeat(lcd, w_large, w_small, w_age_small, w_arrow, w_heart, w_delta_icon, st))
+    asyncio.create_task(task_age_redraw(lcd, w_large, w_small, w_age_small, w_arrow, w_heart, w_delta_icon, st))
+    asyncio.create_task(task_glucose_fetch(lcd, w_large, w_small, w_age_small, w_arrow, w_heart, w_delta_icon, st))
     asyncio.create_task(task_wifi_reconnect(st))
 
     while True:
@@ -1536,14 +1536,14 @@ def main(framebuffer=None):
     # 6. If we have data, draw it NOW
     if last:
         draw_all_fields_if_needed(
-            lcd, w_small, w_age_small, w_arrow, w_heart, w_delta_icon,
+            lcd, w_large, w_small, w_age_small, w_arrow, w_heart, w_delta_icon,
             hb_state, st
         )
         gc.collect()
 
     # 7. START ASYNC LOOP
     asyncio.run(async_main(
-        lcd, w_small, w_age_small, w_arrow, w_heart, w_delta_icon, st
+        lcd, w_large, w_small, w_age_small, w_arrow, w_heart, w_delta_icon, st
     ))
 
 
