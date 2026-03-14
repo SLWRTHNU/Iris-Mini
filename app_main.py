@@ -1346,10 +1346,24 @@ async def task_buzzer_driver():
         now = utime.ticks_ms()
         snoozed = utime.ticks_diff(now, buzzer_snooze_until) < 0
 
-        # Mode 1: SEVERE solid tone (ignores snooze)
+        # Mode 1: SEVERE burst pattern (ignores snooze)
+        # 4 groups x 5 rapid beeps (80ms on/off), 400ms gap between groups
         if buzzer_mode == 1:
-            BUZ.value(0)  # ON solid
-            await asyncio.sleep_ms(50)
+            stopped = False
+            for _g in range(4):
+                if stopped or buzzer_mode != 1:
+                    break
+                for _ in range(5):
+                    if BTN_STOP.value() == 0:
+                        request_buzzer_stop()
+                        stopped = True
+                        break
+                    BUZ.value(0); await asyncio.sleep_ms(80)
+                    BUZ.value(1); await asyncio.sleep_ms(80)
+                if not stopped and _g < 3:
+                    await asyncio.sleep_ms(400)
+            if not stopped and buzzer_mode == 1:
+                await asyncio.sleep_ms(1500)  # pause before repeating
             continue
 
         # Mode 2: MILD pattern (respects snooze)
