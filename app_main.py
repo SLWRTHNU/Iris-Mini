@@ -6,7 +6,7 @@ hb_state = True
 wdt = None
 factory_reset_exit_requested = False
 
-BUZ = Pin(17, Pin.IN, Pin.PULL_UP)
+BUZ = Pin(38, Pin.IN, Pin.PULL_UP)
 utime.sleep_ms(10)
 BUZ.init(Pin.OUT, value=1)  # Active-low: 1 = OFF
 

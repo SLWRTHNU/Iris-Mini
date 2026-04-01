@@ -71,7 +71,7 @@ Y_POS      = 227  # 240 - 13 (bottom of screen)
 STATUS_X   = 3
 
 # ---------- LCD hard reset/backlight ----------
-LCD_BL_PIN = 15
+LCD_BL_PIN = 21
 LCD_RST_PIN = 13
 _BL_PWM = None
 
