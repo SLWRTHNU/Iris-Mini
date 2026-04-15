@@ -934,9 +934,9 @@ def _draw_delta_if_changed(lcd, w_small, w_delta_icon, new_delta_text, st, y_del
 
     W = lcd.width
     gap = 12
-    v_offset = -8
-    NUM_Y_OFFSET = -5   # negative = up, positive = down
-    NUM_X_OFFSET = -5    # negative = left, positive = right
+    v_offset = 0         # vertical offset of the delta icon relative to the number; negative = up
+    NUM_Y_OFFSET = 0     # vertical offset of the number; negative = up, positive = down
+    NUM_X_OFFSET = 0     # horizontal offset of the number; negative = left, positive = right
 
 
     # Compute old box
@@ -1033,7 +1033,7 @@ def draw_all_fields_if_needed(
 
     W, H = lcd.width, lcd.height
 
-    y_age = 6
+    y_age = 0
 
     if not last:
         return
@@ -1063,15 +1063,12 @@ def draw_all_fields_if_needed(
     big_h = w_large.font.height()
     small_h = w_small.font.height()
     arrow_h = w_arrow.font.height()
-    bottom_h = max(small_h, arrow_h)
 
     y_bg = (H - big_h) // 2
 
-    y_bottom_base = H - bottom_h - 1
-    arrow_offset = -2
-    x_arrow = 10
-    y_arrow = (y_bottom_base + (bottom_h - arrow_h) // 2) + arrow_offset
-    y_delta = y_bottom_base + (bottom_h - small_h) // 2
+    x_arrow = 0
+    y_arrow = H - arrow_h   # flush with bottom edge
+    y_delta = H - small_h   # flush with bottom edge
 
     # Draw all data fields
     raw_s = last["time_ms"] // 1000
@@ -1109,8 +1106,8 @@ def draw_all_fields_if_needed(
     _draw_age_if_changed(lcd, w_age_small, age_text, age_color, st, y_age)
     _draw_heart_if_changed(lcd, w_heart, hb_state, st, x_heart, y_heart, pad=2)
     _draw_bg_if_changed(lcd, w_large, bg_text, bg_color, st, y_bg)
-    _draw_arrow_if_changed(lcd, w_arrow, arrow_text, arrow_color, st, x_arrow, y_arrow, x_offset=10, y_offset=-10)
-    _draw_delta_if_changed(lcd, w_small, w_delta_icon, delta_text, st, y_delta, right_margin=4)
+    _draw_arrow_if_changed(lcd, w_arrow, arrow_text, arrow_color, st, x_arrow, y_arrow, x_offset=0, y_offset=0)
+    _draw_delta_if_changed(lcd, w_small, w_delta_icon, delta_text, st, y_delta, right_margin=0)
     _end_batch(lcd)
 
 
