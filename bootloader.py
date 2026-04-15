@@ -130,7 +130,7 @@ def init_lcd():
         return None
     
     
-def backlight_dim_early(pct=10):
+def backlight_dim_early(pct=50):
     # Runs before LCD_Driver() to prevent initial full-bright flash
     global _BL_PWM
     from machine import Pin, PWM
