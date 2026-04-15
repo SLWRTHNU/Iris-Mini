@@ -73,30 +73,6 @@ sta = None
 
 # Memory monitoring removed - not needed with 8MB RAM
 
-BTN_STOP = Pin(2, Pin.IN, Pin.PULL_UP)
-
-buzzer_stop_requested = False
-
-def request_buzzer_stop():
-    global buzzer_mode, buzzer_snooze_until, last_mild_beep_time
-
-    # If no alert is active, button does nothing
-    if buzzer_mode == 0:
-        return
-
-    # Stop everything
-    BUZ.value(1)
-    buzzer_mode = 0
-
-    now = utime.ticks_ms()
-
-    # Snooze ALL alerts for 10 minutes
-    buzzer_snooze_until = utime.ticks_add(now, BUZZER_SNOOZE_MS)
-
-    # Restart mild timer so it won't fire immediately after snooze ends
-    last_mild_beep_time = now
-
-
 # ESP32-S3: Factory reset now uses onboard BOOT button (in boot.py)
 # No external button needed
 # FACTORY_BTN = Pin(16, Pin.IN, Pin.PULL_UP)
@@ -1313,79 +1289,39 @@ async def task_glucose_fetch(lcd, w_large, w_small, w_age_small, w_arrow, w_hear
 
         await asyncio.sleep_ms(5000)
 
-async def task_buzzer_stop_button():
-    # Simple debounce + edge detect
-    last_state = 1
-    stable_count = 0
-    DEBOUNCE_MS = 30
-    POLL_MS = 10
-
-    while True:
-        s = BTN_STOP.value()
-        if s == last_state:
-            stable_count += POLL_MS
-        else:
-            stable_count = 0
-            last_state = s
-
-        # Press detected (active-low) and stable long enough
-        if s == 0 and stable_count >= DEBOUNCE_MS:
-            request_buzzer_stop()
-            # Wait until release so it only fires once per press
-            while BTN_STOP.value() == 0:
-                await asyncio.sleep_ms(20)
-            stable_count = 0
-            last_state = 1
-
-        await asyncio.sleep_ms(POLL_MS)
-
 async def task_buzzer_driver():
-    global buzzer_mode, last_mild_beep_time
+    global buzzer_mode
 
     while True:
-        now = utime.ticks_ms()
-        snoozed = utime.ticks_diff(now, buzzer_snooze_until) < 0
-
-        # Mode 1: SEVERE burst pattern (ignores snooze)
+        # Mode 1: SEVERE burst pattern
         # 4 groups x 5 rapid beeps (80ms on/off), 400ms gap between groups
         if buzzer_mode == 1:
-            stopped = False
             for _g in range(4):
-                if stopped or buzzer_mode != 1:
+                if buzzer_mode != 1:
                     break
                 for _ in range(5):
-                    if BTN_STOP.value() == 0:
-                        request_buzzer_stop()
-                        stopped = True
-                        break
                     BUZ.value(0); await asyncio.sleep_ms(80)
                     BUZ.value(1); await asyncio.sleep_ms(80)
-                if not stopped and _g < 3:
+                if _g < 3:
                     await asyncio.sleep_ms(400)
-            if not stopped and buzzer_mode == 1:
-                await asyncio.sleep_ms(1500)  # pause before repeating
+            BUZ.value(1)
+            buzzer_mode = 0  # one cycle done; check_glucose_alerts re-enables after cooldown
+            await asyncio.sleep_ms(100)
             continue
 
-        # Mode 2: MILD pattern (respects snooze)
-        if buzzer_mode == 2 and not snoozed:
-            if utime.ticks_diff(now, last_mild_beep_time) >= MILD_COOLDOWN_MS:
-                # 3-beep sequence, repeated 3 times with a 1-second gap
-                stopped = False
-                for _rep in range(3):
-                    if stopped:
-                        break
-                    for _ in range(3):
-                        if BTN_STOP.value() == 0:
-                            request_buzzer_stop()
-                            stopped = True
-                            break
-                        BUZ.value(0); await asyncio.sleep_ms(150)
-                        BUZ.value(1); await asyncio.sleep_ms(150)
-                    if not stopped and _rep < 2:
-                        await asyncio.sleep_ms(1000)
-                last_mild_beep_time = utime.ticks_ms()
-
+        # Mode 2: MILD pattern
+        # 3-beep sequence, repeated 3 times with a 1-second gap
+        if buzzer_mode == 2:
+            for _rep in range(3):
+                if buzzer_mode != 2:
+                    break
+                for _ in range(3):
+                    BUZ.value(0); await asyncio.sleep_ms(150)
+                    BUZ.value(1); await asyncio.sleep_ms(150)
+                if _rep < 2:
+                    await asyncio.sleep_ms(1000)
             BUZ.value(1)
+            buzzer_mode = 0  # one cycle done; check_glucose_alerts re-enables after cooldown
             await asyncio.sleep_ms(100)
             continue
 
@@ -1412,7 +1348,6 @@ async def async_main(lcd, w_large, w_small, w_age_small, w_arrow, w_heart, w_del
     global wdt
 
     asyncio.create_task(task_factory_reset_button(lcd, w_small, st))
-    asyncio.create_task(task_buzzer_stop_button())
     asyncio.create_task(task_buzzer_driver())
 
     await asyncio.sleep(2)
@@ -1432,9 +1367,9 @@ async def async_main(lcd, w_large, w_small, w_age_small, w_arrow, w_heart, w_del
 # --- Buzzer Configuration ---
 # Read alert settings from config.py
 
-# Snooze duration from config
-BUZZER_SNOOZE_MS = cfg("ALERT_SNOOZE_MINUTES", 10) * 60 * 1000
-buzzer_snooze_until = 0
+# Cooldown: 10 minutes between repeated alerts at the same severity level.
+# Transitions between severity levels (low→severe, severe→low) are always immediate.
+ALERT_COOLDOWN_MS = 10 * 60 * 1000
 
 # Alert thresholds from config
 ALERT_LOW_ENABLED = cfg("ALERT_LOW_ENABLED", True)
@@ -1451,39 +1386,49 @@ else:
 
 SEVERE_LOW_THRESHOLD = ALERT_SEVERE_THRESHOLD
 
-# Buzzer mode: 0=off, 1=severe solid, 2=mild pattern
+# Buzzer mode: 0=off, 1=severe, 2=mild
+# The driver sets this back to 0 after each cycle; check_glucose_alerts re-enables it.
 buzzer_mode = 0
 
-last_mild_beep_time = utime.ticks_add(utime.ticks_ms(), -BUZZER_SNOOZE_MS)
-MILD_COOLDOWN_MS = BUZZER_SNOOZE_MS
+# Cooldown tracking
+last_alert_mode = 0  # severity level (1 or 2) when we last fired an alert
+last_alert_time = 0  # ticks_ms when that alert last started
 
 
 def check_glucose_alerts(bg_value):
-    global buzzer_mode
+    global buzzer_mode, last_alert_mode, last_alert_time
 
     if bg_value is None:
         return
 
-    now = utime.ticks_ms()
-    snoozed = utime.ticks_diff(now, buzzer_snooze_until) < 0
-
-    # If snoozed, force off (no alerts at all)
-    if snoozed:
-        buzzer_mode = 0
-        return
-
-    # SEVERE has priority (if enabled)
+    # Determine desired alert level
+    desired = 0
     if ALERT_SEVERE_ENABLED and bg_value <= SEVERE_LOW_THRESHOLD:
-        buzzer_mode = 1
+        desired = 1  # severe
+    elif ALERT_LOW_ENABLED and bg_value <= MILD_LOW_THRESHOLD:
+        desired = 2  # mild
+
+    # No alert needed — silence and reset tracking
+    if desired == 0:
+        buzzer_mode = 0
+        last_alert_mode = 0
+        last_alert_time = 0
         return
 
-    # MILD (if enabled)
-    if ALERT_LOW_ENABLED and bg_value <= MILD_LOW_THRESHOLD:
-        buzzer_mode = 2
+    now = utime.ticks_ms()
+
+    # Transition to a different severity level (or first alert) — always immediate
+    if desired != last_alert_mode:
+        buzzer_mode = desired
+        last_alert_mode = desired
+        last_alert_time = now
         return
 
-    # No alerts triggered
-    buzzer_mode = 0
+    # Same severity as before: only re-trigger once the 10-minute cooldown has expired.
+    # The driver sets buzzer_mode=0 after each cycle so we know it has finished.
+    if buzzer_mode == 0 and utime.ticks_diff(now, last_alert_time) >= ALERT_COOLDOWN_MS:
+        buzzer_mode = desired
+        last_alert_time = now
 
             
 # ============================
