@@ -627,11 +627,11 @@ def run_setup_mode(lcd):
         w_setup.set_textpos(lcd, y, final_x)
         w_setup.printstring(text)
 
-    print_safe("Iris Setup", 20, -1, YELLOW)
-    print_safe("1) Connect to WiFi:", 80, 60, WHITE)
-    print_safe("Iris Mini", 110, 90, YELLOW)
-    print_safe("2) Visit in browser:", 160, 60, WHITE)
-    print_safe("{}".format(ip), 190, 90, YELLOW)
+    print_safe("Iris Setup", 25, -1, YELLOW)
+    print_safe("1) Connect to WiFi:", 85, 40, WHITE)
+    print_safe("Iris Mini", 115, 80, YELLOW)
+    print_safe("2) Visit in browser:", 165, 40, WHITE)
+    print_safe("{}".format(ip), 195, 80, YELLOW)
 
     lcd.show()
     gc.collect()
@@ -741,3 +741,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+ 
