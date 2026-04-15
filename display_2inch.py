@@ -10,11 +10,11 @@ import micropython
 # ── GPIO pin assignments (same ESP32-S3 board as Iris Classic) ──────────────
 # Adjust these to match your physical wiring if different.
 LCD_DC  = 14   # Data/Command
-LCD_CS  = 9    # Chip Select
-SCK     = 10   # SPI Clock
+LCD_CS  = 12   # Chip Select
+SCK     = 4    # SPI Clock
 MOSI    = 11   # SPI MOSI
 LCD_RST = 13   # Reset (active-low pulse)
-LCD_BL  = 15   # Backlight PWM
+LCD_BL  = 21   # Backlight PWM
 
 
 @micropython.viper

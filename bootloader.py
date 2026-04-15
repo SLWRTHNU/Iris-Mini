@@ -40,7 +40,7 @@ def log_exc(tag, e):
 
 # ---------- GitHub & Paths ----------
 GITHUB_USER   = "SLWRTHNU"
-GITHUB_REPO   = "Iris-Classic"
+GITHUB_REPO   = "Iris-Mini"
 # TEST BRANCH — change to "main" for production
 GITHUB_BRANCH = "claude/review-code-access-ym9AV"
 RAW_BASE = "https://raw.githubusercontent.com/{}/{}/{}".format(
@@ -71,7 +71,7 @@ Y_POS      = 227  # 240 - 13 (bottom of screen)
 STATUS_X   = 3
 
 # ---------- LCD hard reset/backlight ----------
-LCD_BL_PIN = 15
+LCD_BL_PIN = 21
 LCD_RST_PIN = 13
 _BL_PWM = None
 
@@ -270,7 +270,7 @@ def connect_wifi(lcd, ssid, pwd, timeout_sec=45, retries=2):
     sta = network.WLAN(network.STA_IF)
 
     try:
-        network.hostname("Iris-Classic")
+        network.hostname("Iris-Mini")
     except:
         pass
 
@@ -610,7 +610,7 @@ def show_wifi_failed(lcd):
 def run_setup_mode(lcd):
     ap = network.WLAN(network.AP_IF)
     ap.active(True)
-    ap.config(essid="Iris Classic", security=0)
+    ap.config(essid="Iris Mini", security=0)
     ip = "192.168.4.1"
 
     import config_font
@@ -629,7 +629,7 @@ def run_setup_mode(lcd):
 
     print_safe("Iris Setup", 20, -1, YELLOW)
     print_safe("1) Connect to WiFi:", 80, 60, WHITE)
-    print_safe("Iris Classic", 110, 90, YELLOW)
+    print_safe("Iris Mini", 110, 90, YELLOW)
     print_safe("2) Visit in browser:", 160, 60, WHITE)
     print_safe("{}".format(ip), 190, 90, YELLOW)
 

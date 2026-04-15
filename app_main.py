@@ -6,7 +6,7 @@ hb_state = True
 wdt = None
 factory_reset_exit_requested = False
 
-BUZ = Pin(17, Pin.IN, Pin.PULL_UP)
+BUZ = Pin(38, Pin.IN, Pin.PULL_UP)
 utime.sleep_ms(10)
 BUZ.init(Pin.OUT, value=1)  # Active-low: 1 = OFF
 
@@ -56,9 +56,7 @@ import arrows_font as font_arrows
 import heart as font_heart
 import delta as font_delta
 import config_font as font_config
-import mini_digits as big_digits
-from big_digits_draw import draw_big_text
-BIG_DIGITS_HEIGHT = big_digits.HEIGHT  # 98
+import large_font
 
 
 # Memory monitoring removed - not needed with 8MB RAM
@@ -892,20 +890,11 @@ def _draw_heart_if_changed(lcd, w_heart, heart_on, st, x_heart, y_heart, pad=2):
     st.heart_on = heart_on
 
 
-def _big_text_width(s, spacing=2):
-    w = 0
-    for ch in s:
-        g = big_digits.GLYPHS.get(ch)
-        if g:
-            w += g[0] + spacing
-    return max(0, w - spacing)
-
-def _draw_bg_if_changed(lcd, new_text, new_color, st, y_bg):
+def _draw_bg_if_changed(lcd, w_large, new_text, new_color, st, y_bg):
     W = lcd.width
-    H = BIG_DIGITS_HEIGHT
-    spacing = 2
+    H = w_large.font.height()
 
-    new_w = _big_text_width(new_text, spacing=spacing)
+    new_w = w_large.stringlen(new_text)
     x_new = (W - new_w) // 2
 
     if st.bg_text == new_text and st.bg_color == new_color:
@@ -913,21 +902,20 @@ def _draw_bg_if_changed(lcd, new_text, new_color, st, y_bg):
 
     old_bbox = None
     if st.bg_text is not None:
-        old_w = _big_text_width(st.bg_text, spacing=spacing)
+        old_w = w_large.stringlen(st.bg_text)
         x_old = (W - old_w) // 2
         old_bbox = (x_old - 6, y_bg - 6, old_w + 12, H + 12)
 
     new_bbox = (x_new - 6, y_bg - 6, new_w + 12, H + 12)
     dirty = _union_rect(old_bbox, new_bbox)
 
-    # Clear the union area once
     _clear_rect(lcd, dirty[0], dirty[1], dirty[2], dirty[3], BLACK)
 
-    # Draw AND flush once (draw_big_text flushes)
-    draw_big_text(lcd, new_text, x_new, y_bg, fg=new_color, bg=BLACK, spacing=spacing, flush=False)
-    # Mark the dirty area so the final batch flush updates it
-    _show_rect(lcd, dirty[0], dirty[1], dirty[2], dirty[3])
+    w_large.setcolor(new_color, BLACK)
+    w_large.set_textpos(lcd, y_bg, x_new)
+    w_large.printstring(new_text)
 
+    _show_rect(lcd, dirty[0], dirty[1], dirty[2], dirty[3])
 
     st.bg_text = new_text
     st.bg_color = new_color
@@ -1055,7 +1043,7 @@ def draw_loading_once(lcd, writer, st):
 
 def draw_all_fields_if_needed(
     lcd,
-    w_small, w_age_small, w_arrow, w_heart, w_delta_icon,
+    w_large, w_small, w_age_small, w_arrow, w_heart, w_delta_icon,
     hb_state,
     st
 ):
@@ -1096,7 +1084,7 @@ def draw_all_fields_if_needed(
     x_heart = W - heart_right_margin - heart_w
     y_heart = y_age + (age_small_h - heart_h) // 4
 
-    big_h = BIG_DIGITS_HEIGHT
+    big_h = w_large.font.height()
     small_h = w_small.font.height()
     arrow_h = w_arrow.font.height()
     bottom_h = max(small_h, arrow_h)
@@ -1144,7 +1132,7 @@ def draw_all_fields_if_needed(
     _begin_batch()
     _draw_age_if_changed(lcd, w_age_small, age_text, age_color, st, y_age)
     _draw_heart_if_changed(lcd, w_heart, hb_state, st, x_heart, y_heart, pad=2)
-    _draw_bg_if_changed(lcd, bg_text, bg_color, st, y_bg)
+    _draw_bg_if_changed(lcd, w_large, bg_text, bg_color, st, y_bg)
     _draw_arrow_if_changed(lcd, w_arrow, arrow_text, arrow_color, st, x_arrow, y_arrow, x_offset=10, y_offset=-10)
     _draw_delta_if_changed(lcd, w_small, w_delta_icon, delta_text, st, y_delta, right_margin=4)
     _end_batch(lcd)
@@ -1238,7 +1226,7 @@ async def task_factory_reset_button(lcd, w_small, st):
         machine_reset()
 
 
-async def task_heartbeat(lcd, w_small, w_age_small, w_arrow, w_heart, w_delta_icon, st):
+async def task_heartbeat(lcd, w_large, w_small, w_age_small, w_arrow, w_heart, w_delta_icon, st):
     global hb_state, last, wdt, factory_reset_exit_requested
     
     while True:
@@ -1262,24 +1250,24 @@ async def task_heartbeat(lcd, w_small, w_age_small, w_arrow, w_heart, w_delta_ic
 
         hb_state = not hb_state
         draw_all_fields_if_needed(
-            lcd, w_small, w_age_small, w_arrow, w_heart, w_delta_icon,
+            lcd, w_large, w_small, w_age_small, w_arrow, w_heart, w_delta_icon,
             hb_state, st
         )
         await asyncio.sleep(1)
 
 
-async def task_age_redraw(lcd, w_small, w_age_small, w_arrow, w_heart, w_delta_icon, st):
+async def task_age_redraw(lcd, w_large, w_small, w_age_small, w_arrow, w_heart, w_delta_icon, st):
     global last, hb_state
     while True:
         if last:
             draw_all_fields_if_needed(
-                lcd, w_small, w_age_small, w_arrow, w_heart, w_delta_icon,
+                lcd, w_large, w_small, w_age_small, w_arrow, w_heart, w_delta_icon,
                 hb_state, st
             )
         await asyncio.sleep(60)
 
 
-async def task_glucose_fetch(lcd, w_small, w_age_small, w_arrow, w_heart, w_delta_icon, st):
+async def task_glucose_fetch(lcd, w_large, w_small, w_age_small, w_arrow, w_heart, w_delta_icon, st):
     global last, hb_state, wifi_ok, wdt
 
     await asyncio.sleep(1 if wifi_ok else 60)
@@ -1316,7 +1304,7 @@ async def task_glucose_fetch(lcd, w_small, w_age_small, w_arrow, w_heart, w_delt
                 last = parsed
                 check_glucose_alerts(last["bg"])
                 draw_all_fields_if_needed(
-                    lcd, w_small, w_age_small, w_arrow, w_heart, w_delta_icon,
+                    lcd, w_large, w_small, w_age_small, w_arrow, w_heart, w_delta_icon,
                     hb_state, st
                 )
             gc.collect()
@@ -1358,10 +1346,24 @@ async def task_buzzer_driver():
         now = utime.ticks_ms()
         snoozed = utime.ticks_diff(now, buzzer_snooze_until) < 0
 
-        # Mode 1: SEVERE solid tone (ignores snooze)
+        # Mode 1: SEVERE burst pattern (ignores snooze)
+        # 4 groups x 5 rapid beeps (80ms on/off), 400ms gap between groups
         if buzzer_mode == 1:
-            BUZ.value(0)  # ON solid
-            await asyncio.sleep_ms(50)
+            stopped = False
+            for _g in range(4):
+                if stopped or buzzer_mode != 1:
+                    break
+                for _ in range(5):
+                    if BTN_STOP.value() == 0:
+                        request_buzzer_stop()
+                        stopped = True
+                        break
+                    BUZ.value(0); await asyncio.sleep_ms(80)
+                    BUZ.value(1); await asyncio.sleep_ms(80)
+                if not stopped and _g < 3:
+                    await asyncio.sleep_ms(400)
+            if not stopped and buzzer_mode == 1:
+                await asyncio.sleep_ms(1500)  # pause before repeating
             continue
 
         # Mode 2: MILD pattern (respects snooze)
@@ -1406,7 +1408,7 @@ async def task_wifi_reconnect(st):
             wdt.feed()
 
 
-async def async_main(lcd, w_small, w_age_small, w_arrow, w_heart, w_delta_icon, st):
+async def async_main(lcd, w_large, w_small, w_age_small, w_arrow, w_heart, w_delta_icon, st):
     global wdt
 
     asyncio.create_task(task_factory_reset_button(lcd, w_small, st))
@@ -1415,9 +1417,9 @@ async def async_main(lcd, w_small, w_age_small, w_arrow, w_heart, w_delta_icon, 
 
     await asyncio.sleep(2)
 
-    asyncio.create_task(task_heartbeat(lcd, w_small, w_age_small, w_arrow, w_heart, w_delta_icon, st))
-    asyncio.create_task(task_age_redraw(lcd, w_small, w_age_small, w_arrow, w_heart, w_delta_icon, st))
-    asyncio.create_task(task_glucose_fetch(lcd, w_small, w_age_small, w_arrow, w_heart, w_delta_icon, st))
+    asyncio.create_task(task_heartbeat(lcd, w_large, w_small, w_age_small, w_arrow, w_heart, w_delta_icon, st))
+    asyncio.create_task(task_age_redraw(lcd, w_large, w_small, w_age_small, w_arrow, w_heart, w_delta_icon, st))
+    asyncio.create_task(task_glucose_fetch(lcd, w_large, w_small, w_age_small, w_arrow, w_heart, w_delta_icon, st))
     asyncio.create_task(task_wifi_reconnect(st))
 
     while True:
@@ -1513,6 +1515,7 @@ def main(framebuffer=None):
     gc.collect()
 
     # 2. INIT WRITERS
+    w_large = CWriter(lcd, large_font, fgcolor=WHITE, bgcolor=BLACK, verbose=False)
     w_small = CWriter(lcd, font_small, fgcolor=WHITE, bgcolor=BLACK, verbose=False)
     w_age_small = CWriter(lcd, age_font_small, fgcolor=WHITE, bgcolor=BLACK, verbose=False)
     w_arrow = CWriter(lcd, font_arrows, fgcolor=WHITE, bgcolor=BLACK, verbose=False)
@@ -1520,6 +1523,7 @@ def main(framebuffer=None):
     w_delta_icon = CWriter(lcd, font_delta, fgcolor=WHITE, bgcolor=BLACK, verbose=False)
     gc.collect()
 
+    w_large.set_spacing(2)
     w_small.set_spacing(3)
     w_age_small.set_spacing(2)
     w_arrow.set_spacing(8)
@@ -1546,14 +1550,14 @@ def main(framebuffer=None):
     # 6. If we have data, draw it NOW
     if last:
         draw_all_fields_if_needed(
-            lcd, w_small, w_age_small, w_arrow, w_heart, w_delta_icon,
+            lcd, w_large, w_small, w_age_small, w_arrow, w_heart, w_delta_icon,
             hb_state, st
         )
         gc.collect()
 
     # 7. START ASYNC LOOP
     asyncio.run(async_main(
-        lcd, w_small, w_age_small, w_arrow, w_heart, w_delta_icon, st
+        lcd, w_large, w_small, w_age_small, w_arrow, w_heart, w_delta_icon, st
     ))
 
 
