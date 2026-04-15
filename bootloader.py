@@ -42,7 +42,7 @@ def log_exc(tag, e):
 GITHUB_USER   = "SLWRTHNU"
 GITHUB_REPO   = "Iris-Mini"
 # TEST BRANCH — change to "main" for production
-GITHUB_BRANCH = "claude/review-code-access-ym9AV"
+GITHUB_BRANCH = "main"
 RAW_BASE = "https://raw.githubusercontent.com/{}/{}/{}".format(
     GITHUB_USER, GITHUB_REPO, GITHUB_BRANCH)
 
