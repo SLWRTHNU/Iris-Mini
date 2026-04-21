@@ -62,8 +62,7 @@ import large_font
 # Memory monitoring removed - not needed with 8MB RAM
     
 # ---------- Colors ----------
-YELLOW = 0xFFFF
-#YELLOW = 0xFFE0
+YELLOW = 0xFFE0
 RED    = 0xF800
 GREEN  = 0x07E0
 BLACK  = 0x0000
